@@ -72,6 +72,7 @@ export class DiscordBot {
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMessageTyping,
       ],
     });
   }
@@ -508,12 +509,23 @@ export class DiscordBot {
     if (message.author.bot) return;
 
     const channel = message.channel;
-    if (!channel.isThread()) return;
+    if (!channel.isThread()) {
+      console.log(`[msg] Ignored: not a thread (channel: ${channel.id})`);
+      return;
+    }
 
-    if (!this.isAllowedUser(message.author.id)) return;
+    if (!this.isAllowedUser(message.author.id)) {
+      console.log(`[msg] Ignored: user not allowed (${message.author.id})`);
+      return;
+    }
 
     const session = store.get(channel.id);
-    if (!session) return;
+    if (!session) {
+      console.log(`[msg] Ignored: no session for thread ${channel.id}`);
+      return;
+    }
+
+    console.log(`[msg] Processing message in ${session.projectDir}`);
 
     if (processManager.isRunning(session.id)) {
       await message.reply('⏳ A task is already running. Use `/stop` to cancel it.');
