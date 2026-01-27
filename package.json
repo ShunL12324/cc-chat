@@ -1,0 +1,31 @@
+{
+  "name": "cc-chat",
+  "version": "1.0.0",
+  "description": "Discord bot that bridges Claude Code to mobile devices",
+  "type": "module",
+  "bin": {
+    "cc-chat": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "register": "bun src/register-commands.ts",
+    "build": "bun run build:win && bun run build:mac && bun run build:linux",
+    "build:win": "bun build --compile --target=bun-windows-x64 src/index.ts --outfile dist/cc-chat-win.exe",
+    "build:mac": "bun build --compile --target=bun-darwin-arm64 src/index.ts --outfile dist/cc-chat-mac",
+    "build:linux": "bun build --compile --target=bun-linux-x64 src/index.ts --outfile dist/cc-chat-linux"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/syumai/cc-chat.git"
+  },
+  "keywords": ["discord", "claude", "claude-code", "bot"],
+  "license": "MIT"
+}
