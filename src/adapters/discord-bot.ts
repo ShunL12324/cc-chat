@@ -77,7 +77,7 @@ export class DiscordBot {
   }
 
   async start(): Promise<void> {
-    this.client.on('ready', () => {
+    this.client.once('clientReady', () => {
       console.log(`Logged in as ${this.client.user?.tag}`);
     });
 
