@@ -1,4 +1,16 @@
+import { dirname, join, isAbsolute } from 'path';
+
 const env = process.env;
+
+// Get app directory (where executable is located)
+const appDir = dirname(process.execPath);
+
+// Resolve path relative to app directory if not absolute
+function resolvePath(path: string): string {
+  if (!path) return path;
+  if (isAbsolute(path)) return path;
+  return join(appDir, path);
+}
 
 export const config = {
   discord: {
@@ -11,7 +23,7 @@ export const config = {
     .split(/[,;]/)
     .map(p => p.trim())
     .filter(Boolean),
-  dbPath: env.DB_PATH || './data/cc-chat.db',
+  dbPath: resolvePath(env.DB_PATH || './data/cc-chat.db'),
   allowedUsers: env.ALLOWED_USER_IDS?.split(',').filter(Boolean) || [],
   claude: {
     defaultModel: (env.DEFAULT_MODEL || 'opus') as 'sonnet' | 'opus' | 'haiku',
