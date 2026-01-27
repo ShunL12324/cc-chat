@@ -2,9 +2,13 @@ import { config, validateConfig } from './config.js';
 import { DiscordBot } from './adapters/discord-bot.js';
 import { store } from './store/sqlite-store.js';
 import { processManager } from './core/process-manager.js';
+import { checkForUpdates } from './core/auto-updater.js';
 
 async function main() {
   console.log('cc-chat starting...');
+
+  // Check for updates (non-blocking)
+  await checkForUpdates();
 
   // Validate configuration
   try {
