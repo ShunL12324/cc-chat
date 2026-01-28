@@ -6,6 +6,7 @@ import {
   type ChatInputCommandInteraction,
   type AutocompleteInteraction,
   type ButtonInteraction,
+  type AnyThreadChannel,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
@@ -528,9 +529,27 @@ export class DiscordBot {
     console.log(`[msg] Processing message in ${session.projectDir}`);
 
     if (processManager.isRunning(session.id)) {
-      await message.reply('⏳ A task is already running. Use `/stop` to cancel it.');
+      const queueLength = processManager.getQueueLength(session.id);
+      await message.reply(`⏳ Queued (#${queueLength + 1}). Use \`/stop\` to cancel.`);
+      await processManager.enqueue(session.id, message.content);
       return;
     }
+
+    await this.executeClaudeTask(session, message.content, channel);
+
+    // Process queued messages
+    let queued: ReturnType<typeof processManager.dequeue>;
+    while ((queued = processManager.dequeue(session.id))) {
+      await this.executeClaudeTask(session, queued.content, channel);
+      queued.resolve();
+    }
+  }
+
+  private async executeClaudeTask(
+    session: Session,
+    prompt: string,
+    channel: AnyThreadChannel
+  ): Promise<void> {
 
     store.update(session.id, { status: 'running', lastActivity: Date.now() });
 
@@ -582,7 +601,7 @@ export class DiscordBot {
         {
           id: session.id,
           cwd: session.projectDir,
-          prompt: message.content,
+          prompt,
           resume: session.claudeSessionId,
           continue: session.useContinue,
           model: session.model,
