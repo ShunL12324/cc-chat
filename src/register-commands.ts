@@ -5,34 +5,37 @@
  * Run this script whenever command definitions change.
  *
  * Registration modes:
- * - Guild-specific (with DISCORD_GUILD_ID): Instant, for development
- * - Global (without DISCORD_GUILD_ID): Takes up to 1 hour to propagate
+ * - Guild-specific (with discord.guildId): Instant, for development
+ * - Global (without discord.guildId): Takes up to 1 hour to propagate
  *
  * Usage:
  *   bun run src/register-commands.ts
  *
- * Required environment variables:
- * - DISCORD_TOKEN: Bot authentication token
- * - DISCORD_CLIENT_ID: Application client ID
- * - DISCORD_GUILD_ID: (Optional) Guild ID for dev registration
+ * Required config.yaml settings:
+ * - discord.token: Bot authentication token
+ * - discord.clientId: Application client ID
+ * - discord.guildId: (Optional) Guild ID for dev registration
  */
 
 import { REST, Routes } from 'discord.js';
-import { config } from './config.js';
+import { loadConfig, config } from './config.js';
 import { commands } from './adapters/commands.js';
 
 /**
  * Register slash commands with Discord API.
  */
 async function main() {
+  // Load configuration
+  loadConfig();
+
   // Validate required configuration
   if (!config.discord.token) {
-    console.error('DISCORD_TOKEN is required');
+    console.error('discord.token is required in config.yaml');
     process.exit(1);
   }
 
   if (!config.discord.clientId) {
-    console.error('DISCORD_CLIENT_ID is required');
+    console.error('discord.clientId is required in config.yaml');
     process.exit(1);
   }
 

@@ -4,7 +4,7 @@
  * Bootstraps the cc-chat Discord bot application.
  *
  * Startup sequence:
- * 1. Load environment variables from .env file
+ * 1. Load configuration from config.yaml
  * 2. Initialize file logger
  * 3. Apply pending updates (if downloaded in previous run)
  * 4. Check for new updates (non-blocking)
@@ -14,10 +14,9 @@
  * 8. Set up graceful shutdown handlers
  */
 
-import { config, validateConfig, loadEnvFromAppDir } from './config.js';
+import { loadConfig, validateConfig } from './config.js';
 import { DiscordBot } from './adapters/discord-bot.js';
 import { store } from './store/sqlite-store.js';
-import { processManager } from './core/process-manager.js';
 import { applyPendingUpdate, checkForUpdates, startPeriodicUpdateCheck } from './core/auto-updater.js';
 import { initLogger } from './core/logger.js';
 
@@ -25,10 +24,10 @@ import { initLogger } from './core/logger.js';
  * Main application entry point.
  */
 async function main() {
-  // Load .env from app directory (for compiled binary)
-  loadEnvFromAppDir();
+  // Load configuration from config.yaml
+  loadConfig();
 
-  // Initialize logger first (writes to app directory)
+  // Initialize logger (writes to app directory)
   initLogger();
 
   // Apply pending update if exists (before anything else)
