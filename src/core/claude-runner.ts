@@ -68,7 +68,7 @@ export async function runClaude(
 
   try {
     const proc = spawn({
-      cmd: ['claude', ...args],
+      cmd: [config.claude.path, ...args],
       cwd,
       stdout: 'pipe',
       stderr: 'pipe',

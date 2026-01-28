@@ -61,6 +61,7 @@ export const config = {
   },
   get claude() {
     return {
+      path: process.env.CLAUDE_PATH || 'claude',
       defaultModel: (process.env.DEFAULT_MODEL || 'opus') as 'sonnet' | 'opus' | 'haiku',
       timeout: 10 * 60 * 1000, // 10 minutes
     };
