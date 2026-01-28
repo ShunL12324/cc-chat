@@ -38,15 +38,27 @@ ALLOWED_USER_IDS=
 
 ## Auto-Start (Windows)
 
-To run on startup without a visible window:
+Use [NSSM](https://nssm.cc/) to run as a Windows service under your user account:
 
-1. Create `start-hidden.vbs`:
-```vbs
-Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run "C:\path\to\cc-chat-win.exe", 0, False
+1. Download NSSM and add to PATH
+
+2. Install the service:
+```powershell
+nssm install cc-chat "C:\path\to\cc-chat-win.exe"
+nssm set cc-chat AppDirectory "C:\path\to"
+nssm set cc-chat ObjectName ".\YourUsername" "YourPassword"
+nssm set cc-chat Start SERVICE_AUTO_START
 ```
 
-2. Add to Task Scheduler:
+3. Start the service:
 ```powershell
-schtasks /create /tn "cc-chat" /tr "wscript.exe C:\path\to\start-hidden.vbs" /sc onlogon /rl highest
+nssm start cc-chat
+```
+
+4. Manage the service:
+```powershell
+nssm status cc-chat    # Check status
+nssm restart cc-chat   # Restart
+nssm stop cc-chat      # Stop
+nssm remove cc-chat    # Uninstall
 ```
