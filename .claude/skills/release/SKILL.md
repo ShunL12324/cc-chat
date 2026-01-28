@@ -2,56 +2,55 @@
 name: release
 description: Bump version, commit, push, and watch GitHub Actions workflow complete (project)
 user-invocable: true
-allowed-tools: Read, Edit, Bash, WebFetch
+allowed-tools: Read, Edit, Bash
 ---
 
 # Release Skill
 
-This skill automates the release process for cc-chat:
+Automates the release process: bump version, commit, push, and watch GitHub Actions.
 
-1. **Bump version** in `package.json`
-2. **Commit** the changes with a proper message
-3. **Push** to remote
-4. **Watch** GitHub Actions workflow until completion
+## Version Bump Rules (Auto-detect)
 
-## Usage
+Analyze commits since last version tag to determine bump type:
 
-When invoked, ask the user for:
-- Version bump type: patch (1.0.0 -> 1.0.1), minor (1.0.0 -> 1.1.0), or major (1.0.0 -> 2.0.0)
-- Or let user specify exact version
+- **major** (X.0.0): Commits with `BREAKING CHANGE` or `!:` (e.g., `feat!:`)
+- **minor** (x.Y.0): Commits starting with `feat:`
+- **patch** (x.y.Z): All other commits (`fix:`, `chore:`, `refactor:`, etc.)
 
 ## Steps
 
-### 1. Read current version
+### 1. Analyze commits and determine version
+
 ```bash
-# Read package.json to get current version
+# Get current version from package.json
+cat package.json | grep '"version"'
+
+# Get commits since last tag (or recent commits if no tag)
+git log --oneline $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD~10)..HEAD
 ```
 
-### 2. Bump version
+Determine bump type from commit prefixes.
+
+### 2. Bump version in package.json
+
 Edit `package.json` to update the version field.
 
 ### 3. Commit and push
+
 ```bash
 git add package.json
-git commit -m "chore: bump version to X.Y.Z"
+git commit -m "chore: release vX.Y.Z"
 git push origin master
 ```
 
 ### 4. Watch GitHub Actions
-Use `gh run list` to find the latest workflow run, then poll `gh run view` until it completes:
 
 ```bash
-# Get the latest run ID
-gh run list --limit 1 --json databaseId --jq '.[0].databaseId'
+# Wait a moment for the workflow to start
+sleep 3
 
-# Watch the run (poll every 10 seconds)
-gh run watch <run_id>
+# Get the latest run ID and watch it
+gh run watch $(gh run list --limit 1 --json databaseId --jq '.[0].databaseId')
 ```
 
-Report the final status to the user (success/failure).
-
-## Notes
-
-- If there are uncommitted changes besides package.json, warn the user
-- If the workflow fails, show the error logs
-- The workflow builds binaries for win/mac/linux and creates a GitHub release
+Report the final status (success/failure) to the user.
