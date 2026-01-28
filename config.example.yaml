@@ -1,0 +1,56 @@
+# cc-chat Configuration
+# Place this file in the same directory as the executable
+
+# Discord Bot Settings
+discord:
+  # Bot authentication token (required)
+  # Can also be set via DISCORD_TOKEN environment variable
+  token: "your-bot-token-here"
+
+  # Discord application client ID (required)
+  # Can also be set via DISCORD_CLIENT_ID environment variable
+  clientId: "your-client-id-here"
+
+  # Guild ID for development (optional)
+  # When set, slash commands are registered instantly to this guild only
+  # When empty, commands are registered globally (takes up to 1 hour)
+  # Can also be set via DISCORD_GUILD_ID environment variable
+  guildId: ""
+
+# Claude CLI Settings
+claude:
+  # Path to the Claude CLI executable
+  # Default: "claude" (assumes it's in PATH)
+  path: "claude"
+
+  # Default model for new sessions
+  # Options: "sonnet", "opus", "haiku"
+  defaultModel: "opus"
+
+  # Process timeout in milliseconds
+  # Default: 900000 (15 minutes)
+  timeout: 900000
+
+# Project Settings
+projects:
+  # List of allowed project root directories
+  # Users can only create sessions within these directories
+  roots:
+    - "C:/Users/YourName/projects"
+    # - "D:/workspace"
+
+# Storage Settings
+storage:
+  # Path to the SQLite database file
+  # Relative paths are resolved from the executable directory
+  dbPath: "./data/cc-chat.db"
+
+# Access Control
+access:
+  # Discord user IDs allowed to use the bot
+  # Empty array means all users are allowed
+  allowedUsers: []
+  # Example:
+  # allowedUsers:
+  #   - "123456789012345678"
+  #   - "987654321098765432"

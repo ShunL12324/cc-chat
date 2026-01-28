@@ -1,61 +1,57 @@
 /**
  * Configuration Module
  *
- * Handles application configuration loading and validation.
- * Supports loading environment variables from .env file located
- * in the executable's directory.
- *
- * Configuration sources (in order of precedence):
- * 1. System environment variables
- * 2. .env file in app directory
- *
- * All paths are resolved relative to the executable location,
+ * Loads and validates application configuration from config.yaml.
+ * The config file is located in the same directory as the executable,
  * making the application portable as a standalone binary.
+ *
+ * Configuration priority:
+ * 1. Environment variables (for sensitive values like tokens)
+ * 2. config.yaml file
+ * 3. Default values
  */
 
 import { dirname, join, isAbsolute } from 'path';
 import { existsSync, readFileSync } from 'fs';
+import { parse as parseYaml } from 'yaml';
+import type { AppConfig, RawConfig, DiscordConfig, ClaudeConfig, ProjectsConfig, StorageConfig, AccessConfig } from './types/config.js';
 
 /**
  * Application directory where the executable is located.
  * Used as the base for relative path resolution.
  */
-const appDir = dirname(process.execPath);
+export const appDir = dirname(process.execPath);
 
 /**
- * Load environment variables from .env file in the app directory.
- *
- * Parses key=value pairs, ignoring comments and empty lines.
- * Only sets variables that are not already defined in process.env,
- * allowing system environment to take precedence.
- *
- * Call this function before accessing the config object.
+ * Default configuration values.
  */
-export function loadEnvFromAppDir(): void {
-  const envPath = join(appDir, '.env');
-  if (!existsSync(envPath)) return;
+const defaults: AppConfig = {
+  discord: {
+    token: '',
+    clientId: '',
+    guildId: '',
+  },
+  claude: {
+    path: 'claude',
+    defaultModel: 'opus',
+    timeout: 15 * 60 * 1000, // 15 minutes
+  },
+  projects: {
+    roots: [],
+  },
+  storage: {
+    dbPath: './data/cc-chat.db',
+  },
+  access: {
+    allowedUsers: [],
+  },
+};
 
-  try {
-    const content = readFileSync(envPath, 'utf-8');
-    for (const line of content.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-
-      const eqIndex = trimmed.indexOf('=');
-      if (eqIndex === -1) continue;
-
-      const key = trimmed.slice(0, eqIndex).trim();
-      const value = trimmed.slice(eqIndex + 1).trim();
-
-      // Only set if not already defined in environment
-      if (!process.env[key]) {
-        process.env[key] = value;
-      }
-    }
-  } catch {
-    // Ignore file read errors silently
-  }
-}
+/**
+ * Loaded configuration instance.
+ * Initialized by loadConfig().
+ */
+let loadedConfig: AppConfig | null = null;
 
 /**
  * Resolve a path relative to the app directory.
@@ -71,72 +67,138 @@ function resolvePath(path: string): string {
 }
 
 /**
+ * Merge configuration section with defaults.
+ */
+function mergeDiscord(defaults: DiscordConfig, source: Partial<DiscordConfig> = {}): DiscordConfig {
+  return {
+    token: source.token ?? defaults.token,
+    clientId: source.clientId ?? defaults.clientId,
+    guildId: source.guildId ?? defaults.guildId,
+  };
+}
+
+function mergeClaude(defaults: ClaudeConfig, source: Partial<ClaudeConfig> = {}): ClaudeConfig {
+  return {
+    path: source.path ?? defaults.path,
+    defaultModel: source.defaultModel ?? defaults.defaultModel,
+    timeout: source.timeout ?? defaults.timeout,
+  };
+}
+
+function mergeProjects(defaults: ProjectsConfig, source: Partial<ProjectsConfig> = {}): ProjectsConfig {
+  return {
+    roots: source.roots ?? defaults.roots,
+  };
+}
+
+function mergeStorage(defaults: StorageConfig, source: Partial<StorageConfig> = {}): StorageConfig {
+  return {
+    dbPath: source.dbPath ?? defaults.dbPath,
+  };
+}
+
+function mergeAccess(defaults: AccessConfig, source: Partial<AccessConfig> = {}): AccessConfig {
+  return {
+    allowedUsers: source.allowedUsers ?? defaults.allowedUsers,
+  };
+}
+
+/**
+ * Load configuration from config.yaml in the app directory.
+ * Merges with defaults and applies environment variable overrides.
+ *
+ * Call this function at application startup before accessing config.
+ *
+ * @throws Error if config.yaml cannot be parsed
+ */
+export function loadConfig(): void {
+  const configPath = join(appDir, 'config.yaml');
+  let rawConfig: RawConfig = {};
+
+  if (existsSync(configPath)) {
+    try {
+      const content = readFileSync(configPath, 'utf-8');
+      rawConfig = parseYaml(content) || {};
+    } catch (error) {
+      throw new Error(`Failed to parse config.yaml: ${error}`);
+    }
+  } else {
+    console.warn(`Config file not found: ${configPath}`);
+    console.warn('Using default configuration. Create config.yaml to customize.');
+  }
+
+  // Merge with defaults
+  const merged: AppConfig = {
+    discord: mergeDiscord(defaults.discord, rawConfig.discord),
+    claude: mergeClaude(defaults.claude, rawConfig.claude),
+    projects: mergeProjects(defaults.projects, rawConfig.projects),
+    storage: mergeStorage(defaults.storage, rawConfig.storage),
+    access: mergeAccess(defaults.access, rawConfig.access),
+  };
+
+  // Environment variable overrides for sensitive values
+  if (process.env.DISCORD_TOKEN) {
+    merged.discord.token = process.env.DISCORD_TOKEN;
+  }
+  if (process.env.DISCORD_CLIENT_ID) {
+    merged.discord.clientId = process.env.DISCORD_CLIENT_ID;
+  }
+  if (process.env.DISCORD_GUILD_ID) {
+    merged.discord.guildId = process.env.DISCORD_GUILD_ID;
+  }
+
+  // Resolve relative paths
+  merged.storage.dbPath = resolvePath(merged.storage.dbPath);
+
+  loadedConfig = merged;
+}
+
+/**
  * Application configuration object.
+ * Provides access to loaded configuration values.
  *
- * Uses getters to lazily read from process.env, allowing
- * loadEnvFromAppDir() to be called after module import.
- *
- * @property discord - Discord bot connection settings
- * @property projectRoots - Allowed project root directories
- * @property dbPath - SQLite database file path
- * @property allowedUsers - User IDs allowed to use the bot
- * @property claude - Claude CLI settings
+ * @throws Error if accessed before loadConfig() is called
  */
 export const config = {
   /**
-   * Discord connection configuration.
+   * Discord bot connection settings.
    */
   get discord() {
-    return {
-      /** Bot authentication token */
-      token: process.env.DISCORD_TOKEN || '',
-      /** Discord application client ID */
-      clientId: process.env.DISCORD_CLIENT_ID || '',
-      /** Guild ID for development (optional) */
-      guildId: process.env.DISCORD_GUILD_ID || '',
-    };
+    if (!loadedConfig) throw new Error('Config not loaded. Call loadConfig() first.');
+    return loadedConfig.discord;
+  },
+
+  /**
+   * Claude CLI settings.
+   */
+  get claude() {
+    if (!loadedConfig) throw new Error('Config not loaded. Call loadConfig() first.');
+    return loadedConfig.claude;
   },
 
   /**
    * Allowed project root directories.
-   * Users can only create sessions within these directories.
-   * Supports comma or semicolon separated list.
    */
   get projectRoots() {
-    return (process.env.PROJECT_ROOTS || '')
-      .split(/[,;]/)
-      .map(p => p.trim())
-      .filter(Boolean);
+    if (!loadedConfig) throw new Error('Config not loaded. Call loadConfig() first.');
+    return loadedConfig.projects.roots;
   },
 
   /**
    * Path to the SQLite database file.
-   * Resolved relative to app directory if not absolute.
    */
   get dbPath() {
-    return resolvePath(process.env.DB_PATH || './data/cc-chat.db');
+    if (!loadedConfig) throw new Error('Config not loaded. Call loadConfig() first.');
+    return loadedConfig.storage.dbPath;
   },
 
   /**
-   * List of Discord user IDs allowed to use the bot.
+   * Discord user IDs allowed to use the bot.
    * Empty array means all users are allowed.
    */
   get allowedUsers() {
-    return process.env.ALLOWED_USER_IDS?.split(',').filter(Boolean) || [];
-  },
-
-  /**
-   * Claude CLI configuration.
-   */
-  get claude() {
-    return {
-      /** Path to the Claude CLI executable */
-      path: process.env.CLAUDE_PATH || 'claude',
-      /** Default model to use for new sessions */
-      defaultModel: (process.env.DEFAULT_MODEL || 'opus') as 'sonnet' | 'opus' | 'haiku',
-      /** Process timeout in milliseconds (10 minutes) */
-      timeout: 10 * 60 * 1000,
-    };
+    if (!loadedConfig) throw new Error('Config not loaded. Call loadConfig() first.');
+    return loadedConfig.access.allowedUsers;
   },
 };
 
@@ -144,13 +206,13 @@ export const config = {
  * Validate required configuration values.
  * Throws an error if required values are missing.
  *
- * @throws Error if DISCORD_TOKEN or DISCORD_CLIENT_ID is not set
+ * @throws Error if discord.token or discord.clientId is not set
  */
 export function validateConfig(): void {
   if (!config.discord.token) {
-    throw new Error('DISCORD_TOKEN is required');
+    throw new Error('discord.token is required in config.yaml or DISCORD_TOKEN env var');
   }
   if (!config.discord.clientId) {
-    throw new Error('DISCORD_CLIENT_ID is required');
+    throw new Error('discord.clientId is required in config.yaml or DISCORD_CLIENT_ID env var');
   }
 }

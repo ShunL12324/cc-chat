@@ -7,6 +7,7 @@
  * Features:
  * - Track running processes by ID (typically Discord thread ID)
  * - Message queueing for sequential processing
+ * - Mutex locks to prevent race conditions
  * - Graceful shutdown of all processes
  */
 
@@ -23,18 +24,79 @@ interface QueuedMessage {
 }
 
 /**
+ * Async mutex lock for a single session.
+ * Ensures only one task runs at a time per session.
+ */
+class AsyncMutex {
+  private locked = false;
+  private waitQueue: (() => void)[] = [];
+
+  async acquire(): Promise<void> {
+    if (!this.locked) {
+      this.locked = true;
+      return;
+    }
+    return new Promise((resolve) => {
+      this.waitQueue.push(resolve);
+    });
+  }
+
+  release(): void {
+    const next = this.waitQueue.shift();
+    if (next) {
+      next();
+    } else {
+      this.locked = false;
+    }
+  }
+
+  isLocked(): boolean {
+    return this.locked;
+  }
+}
+
+/**
  * Manages Claude CLI subprocesses and message queues.
  *
  * Each process is identified by an ID (typically the Discord thread ID).
- * Messages can be queued when a process is already running, and dequeued
- * for sequential execution after the current task completes.
+ * Uses mutex locks to prevent race conditions when checking/starting processes.
  */
 export class ProcessManager {
   /** Map of process ID to running subprocess */
   private running = new Map<string, Subprocess>();
 
+  /** Map of process ID to mutex lock */
+  private locks = new Map<string, AsyncMutex>();
+
   /** Map of process ID to message queue */
   private queues = new Map<string, QueuedMessage[]>();
+
+  /**
+   * Get or create a mutex for a session.
+   */
+  private getMutex(id: string): AsyncMutex {
+    let mutex = this.locks.get(id);
+    if (!mutex) {
+      mutex = new AsyncMutex();
+      this.locks.set(id, mutex);
+    }
+    return mutex;
+  }
+
+  /**
+   * Acquire lock for a session. Must call releaseLock when done.
+   * This ensures only one message is processed at a time per session.
+   */
+  async acquireLock(id: string): Promise<void> {
+    await this.getMutex(id).acquire();
+  }
+
+  /**
+   * Release lock for a session.
+   */
+  releaseLock(id: string): void {
+    this.getMutex(id).release();
+  }
 
   /**
    * Register a new process. Kills existing process with same ID if any.

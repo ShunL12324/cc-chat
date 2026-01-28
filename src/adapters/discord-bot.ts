@@ -627,6 +627,7 @@ export class DiscordBot {
   /**
    * Handle incoming messages in project threads.
    * Routes messages to Claude and streams responses back.
+   * Uses mutex lock to prevent race conditions when multiple messages arrive.
    */
   private async handleMessage(message: Message): Promise<void> {
     if (message.author.bot) return;
@@ -645,21 +646,29 @@ export class DiscordBot {
       return;
     }
 
-    // Queue message if Claude is already running
-    if (processManager.isRunning(session.id)) {
-      const queueLength = processManager.getQueueLength(session.id);
-      await message.reply(`Queued (#${queueLength + 1}). Use \`/stop\` to cancel.`);
-      await processManager.enqueue(session.id, message.content);
-      return;
-    }
+    // Acquire lock to prevent race conditions
+    // This ensures check-then-act is atomic
+    await processManager.acquireLock(session.id);
 
-    await this.executeClaudeTask(session, message.content, channel);
+    try {
+      // Queue message if Claude is already running
+      if (processManager.isRunning(session.id)) {
+        const queueLength = processManager.getQueueLength(session.id);
+        await message.reply(`Queued (#${queueLength + 1}). Use \`/stop\` to cancel.`);
+        await processManager.enqueue(session.id, message.content);
+        return;
+      }
 
-    // Process any queued messages
-    let queued: ReturnType<typeof processManager.dequeue>;
-    while ((queued = processManager.dequeue(session.id))) {
-      await this.executeClaudeTask(session, queued.content, channel);
-      queued.resolve();
+      await this.executeClaudeTask(session, message.content, channel);
+
+      // Process any queued messages
+      let queued: ReturnType<typeof processManager.dequeue>;
+      while ((queued = processManager.dequeue(session.id))) {
+        await this.executeClaudeTask(session, queued.content, channel);
+        queued.resolve();
+      }
+    } finally {
+      processManager.releaseLock(session.id);
     }
   }
 
