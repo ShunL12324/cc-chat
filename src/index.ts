@@ -1,4 +1,4 @@
-import { config, validateConfig } from './config.js';
+import { config, validateConfig, loadEnvFromAppDir } from './config.js';
 import { DiscordBot } from './adapters/discord-bot.js';
 import { store } from './store/sqlite-store.js';
 import { processManager } from './core/process-manager.js';
@@ -6,6 +6,9 @@ import { checkForUpdates } from './core/auto-updater.js';
 import { initLogger } from './core/logger.js';
 
 async function main() {
+  // Load .env from app directory (for compiled binary)
+  loadEnvFromAppDir();
+
   // Initialize logger first (writes to app directory)
   initLogger();
 
