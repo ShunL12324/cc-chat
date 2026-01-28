@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync, renameSync } from 'fs';
 import { dirname, join } from 'path';
+import { spawn } from 'bun';
 
 const REPO_OWNER = 'ShunL12324';
 const REPO_NAME = 'cc-chat';
@@ -72,7 +73,17 @@ export async function checkForUpdates(): Promise<void> {
       renameSync(tempPath, exePath);
       writeFileSync(versionFile, latestTag, 'utf-8');
       console.log(`[update] Updated to ${latestTag}`);
-      console.log('[update] Restart required to apply update');
+      console.log('[update] Restarting...');
+
+      // Spawn new process and exit current
+      spawn({
+        cmd: [exePath],
+        cwd: appDir,
+        stdio: ['ignore', 'ignore', 'ignore'],
+      });
+
+      // Give new process time to start, then exit
+      setTimeout(() => process.exit(0), 1000);
     } catch (error) {
       // Restore backup if rename failed
       console.log(`[update] Failed to apply update: ${error}`);
