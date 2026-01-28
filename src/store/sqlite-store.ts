@@ -252,5 +252,24 @@ export class SqliteStore {
   }
 }
 
-/** Global store instance */
-export const store = new SqliteStore();
+/** Global store instance (lazily initialized) */
+let _store: SqliteStore | null = null;
+
+export const store = {
+  get instance(): SqliteStore {
+    if (!_store) {
+      _store = new SqliteStore();
+    }
+    return _store;
+  },
+  get: (threadId: string) => store.instance.get(threadId),
+  set: (session: Session) => store.instance.set(session),
+  update: (threadId: string, updates: SessionUpdate) => store.instance.update(threadId, updates),
+  delete: (threadId: string) => store.instance.delete(threadId),
+  listByGuild: (guildId: string) => store.instance.listByGuild(guildId),
+  saveMessage: (record: MessageRecord) => store.instance.saveMessage(record),
+  getTotalCost: (threadId?: string) => store.instance.getTotalCost(threadId),
+  clearSession: (threadId: string) => store.instance.clearSession(threadId),
+  getMessages: (threadId: string, limit?: number) => store.instance.getMessages(threadId, limit),
+  close: () => _store?.close(),
+};
