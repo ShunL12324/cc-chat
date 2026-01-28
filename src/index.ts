@@ -1,10 +1,29 @@
+/**
+ * Application Entry Point
+ *
+ * Bootstraps the cc-chat Discord bot application.
+ *
+ * Startup sequence:
+ * 1. Load environment variables from .env file
+ * 2. Initialize file logger
+ * 3. Apply pending updates (if downloaded in previous run)
+ * 4. Check for new updates (non-blocking)
+ * 5. Start periodic update checks
+ * 6. Validate configuration
+ * 7. Initialize and start Discord bot
+ * 8. Set up graceful shutdown handlers
+ */
+
 import { config, validateConfig, loadEnvFromAppDir } from './config.js';
 import { DiscordBot } from './adapters/discord-bot.js';
 import { store } from './store/sqlite-store.js';
 import { processManager } from './core/process-manager.js';
-import { checkForUpdates } from './core/auto-updater.js';
+import { applyPendingUpdate, checkForUpdates, startPeriodicUpdateCheck } from './core/auto-updater.js';
 import { initLogger } from './core/logger.js';
 
+/**
+ * Main application entry point.
+ */
 async function main() {
   // Load .env from app directory (for compiled binary)
   loadEnvFromAppDir();
@@ -12,10 +31,16 @@ async function main() {
   // Initialize logger first (writes to app directory)
   initLogger();
 
+  // Apply pending update if exists (before anything else)
+  applyPendingUpdate();
+
   console.log('cc-chat starting...');
 
   // Check for updates (non-blocking)
-  await checkForUpdates();
+  checkForUpdates().catch(() => {});
+
+  // Start periodic update checks (every hour)
+  startPeriodicUpdateCheck();
 
   // Validate configuration
   try {
@@ -28,7 +53,10 @@ async function main() {
   // Initialize bot
   const bot = new DiscordBot();
 
-  // Graceful shutdown
+  /**
+   * Graceful shutdown handler.
+   * Stops the bot and closes database connections.
+   */
   const shutdown = async () => {
     console.log('\nShutting down...');
     await bot.stop();
@@ -36,6 +64,7 @@ async function main() {
     process.exit(0);
   };
 
+  // Register signal handlers for graceful shutdown
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 

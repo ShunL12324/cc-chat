@@ -1,33 +1,83 @@
+/**
+ * Claude Runner
+ *
+ * Executes Claude CLI commands and streams output through the message parser.
+ * Manages process lifecycle including timeout handling and graceful termination.
+ *
+ * Features:
+ * - Spawns Claude CLI with stream-json output format
+ * - Parses streaming JSON messages from stdout
+ * - Handles session resumption via --resume or --continue flags
+ * - Configurable timeout with automatic process termination
+ */
+
 import { spawn } from 'bun';
 import { MessageParser, type MessageParserHandlers } from './message-parser.js';
 import { processManager } from './process-manager.js';
 import type { ResultMessage, SystemInitMessage } from '../types/index.js';
 import { config } from '../config.js';
 
+/**
+ * Options for running a Claude CLI command.
+ */
 export interface RunOptions {
-  id: string;           // process identifier (usually thread ID)
+  /** Process identifier, typically the Discord thread ID */
+  id: string;
+  /** Working directory for the Claude process */
   cwd: string;
+  /** The prompt to send to Claude */
   prompt: string;
-  resume?: string;      // Claude session ID to resume
-  continue?: boolean;   // Use --continue to resume last conversation
+  /** Claude session ID to resume (mutually exclusive with continue) */
+  resume?: string;
+  /** Use --continue flag to resume last conversation in directory */
+  continue?: boolean;
+  /** Model to use (sonnet, opus, haiku) */
   model?: string;
+  /** Timeout in milliseconds before killing the process */
   timeout?: number;
 }
 
+/**
+ * Result returned after Claude execution completes.
+ */
 export interface RunResult {
+  /** Whether the task completed successfully */
   success: boolean;
+  /** The Claude session ID for resuming later */
   sessionId?: string;
+  /** Error message if failed */
   error?: string;
+  /** Total cost in USD */
   costUsd?: number;
+  /** Duration in milliseconds */
   durationMs?: number;
 }
 
+/**
+ * Run a Claude CLI command with the given options.
+ *
+ * Spawns a Claude process, streams output through handlers, and returns
+ * the result when complete. Handles timeouts and process cleanup.
+ *
+ * @param options - Configuration for the Claude run
+ * @param handlers - Callbacks for various message types
+ * @returns Promise resolving to the run result
+ */
 export async function runClaude(
   options: RunOptions,
   handlers: MessageParserHandlers
 ): Promise<RunResult> {
-  const { id, cwd, prompt, resume, continue: continueConversation, model, timeout = config.claude.timeout } = options;
+  const {
+    id,
+    cwd,
+    prompt,
+    resume,
+    continue: continueConversation,
+    model,
+    timeout = config.claude.timeout
+  } = options;
 
+  // Build CLI arguments
   const args = [
     '-p', prompt,
     '--output-format', 'stream-json',
@@ -35,6 +85,7 @@ export async function runClaude(
     '--dangerously-skip-permissions',
   ];
 
+  // Add session resumption flags (mutually exclusive)
   if (continueConversation) {
     args.push('--continue');
   } else if (resume) {
@@ -48,6 +99,7 @@ export async function runClaude(
   let sessionId: string | undefined;
   let result: ResultMessage | undefined;
 
+  // Wrap handlers to capture session ID and result
   const wrappedHandlers: MessageParserHandlers = {
     ...handlers,
     onSystemInit: async (msg: SystemInitMessage) => {
@@ -77,12 +129,12 @@ export async function runClaude(
 
     processManager.start(id, proc);
 
-    // Set up timeout
+    // Set up timeout to kill long-running processes
     const timeoutId = setTimeout(() => {
       processManager.stop(id);
     }, timeout);
 
-    // Read stdout
+    // Stream and parse stdout
     const reader = proc.stdout.getReader();
     const decoder = new TextDecoder();
 
@@ -97,16 +149,17 @@ export async function runClaude(
       reader.releaseLock();
     }
 
+    // Flush any remaining buffered data
     await parser.flush();
 
     clearTimeout(timeoutId);
 
-    // Wait for process to finish
+    // Wait for process to exit
     const exitCode = await proc.exited;
     processManager.remove(id);
 
+    // Handle non-zero exit without a result message
     if (exitCode !== 0 && !result) {
-      // Read stderr for error info
       const stderrReader = proc.stderr.getReader();
       let stderrText = '';
       try {

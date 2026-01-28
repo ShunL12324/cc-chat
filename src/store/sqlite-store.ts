@@ -1,22 +1,75 @@
+/**
+ * SQLite Store
+ *
+ * Persistent storage layer using SQLite for session and message data.
+ * Uses WAL mode for better concurrent read/write performance.
+ *
+ * Tables:
+ * - thread_bindings: Maps Discord threads to project sessions
+ * - message_history: Stores message records for cost tracking
+ */
+
 import { Database } from 'bun:sqlite';
 import type { Session, SessionUpdate, MessageRecord, CostSummary } from '../types/index.js';
 import { config } from '../config.js';
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
 
+/** Row type for thread_bindings table */
+interface ThreadBindingRow {
+  thread_id: string;
+  channel_id: string;
+  guild_id: string;
+  name: string;
+  project_dir: string;
+  session_id: string | null;
+  model: string;
+  status: string;
+  created_at: number;
+  last_activity: number;
+}
+
+/**
+ * Convert a database row to a Session object.
+ */
+function rowToSession(row: ThreadBindingRow): Session {
+  return {
+    id: row.thread_id,
+    channelId: row.channel_id,
+    guildId: row.guild_id,
+    name: row.name,
+    projectDir: row.project_dir,
+    claudeSessionId: row.session_id || undefined,
+    model: row.model as Session['model'],
+    status: row.status as Session['status'],
+    createdAt: row.created_at,
+    lastActivity: row.last_activity,
+  };
+}
+
+/**
+ * SQLite-based session and message store.
+ *
+ * Provides CRUD operations for project sessions and message history.
+ * Automatically creates database directory and tables on initialization.
+ */
 export class SqliteStore {
   private db: Database;
 
   constructor(dbPath: string = config.dbPath) {
-    // Ensure directory exists
+    // Ensure database directory exists
     mkdirSync(dirname(dbPath), { recursive: true });
 
     this.db = new Database(dbPath);
+    // Enable WAL mode for better concurrent access
     this.db.exec('PRAGMA journal_mode = WAL');
-    this.init();
+    this.initTables();
   }
 
-  private init(): void {
+  /**
+   * Initialize database tables and indexes.
+   */
+  private initTables(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS thread_bindings (
         thread_id TEXT PRIMARY KEY,
@@ -30,6 +83,8 @@ export class SqliteStore {
         created_at INTEGER NOT NULL,
         last_activity INTEGER NOT NULL
       );
+
+      CREATE INDEX IF NOT EXISTS idx_thread_guild ON thread_bindings(guild_id);
 
       CREATE TABLE IF NOT EXISTS message_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,38 +101,20 @@ export class SqliteStore {
     `);
   }
 
+  /**
+   * Get a session by thread ID.
+   */
   get(threadId: string): Session | null {
-    const row = this.db.query<{
-      thread_id: string;
-      channel_id: string;
-      guild_id: string;
-      name: string;
-      project_dir: string;
-      session_id: string | null;
-      model: string;
-      status: string;
-      created_at: number;
-      last_activity: number;
-    }, [string]>(`
+    const row = this.db.query<ThreadBindingRow, [string]>(`
       SELECT * FROM thread_bindings WHERE thread_id = ?
     `).get(threadId);
 
-    if (!row) return null;
-
-    return {
-      id: row.thread_id,
-      channelId: row.channel_id,
-      guildId: row.guild_id,
-      name: row.name,
-      projectDir: row.project_dir,
-      claudeSessionId: row.session_id || undefined,
-      model: row.model as Session['model'],
-      status: row.status as Session['status'],
-      createdAt: row.created_at,
-      lastActivity: row.last_activity,
-    };
+    return row ? rowToSession(row) : null;
   }
 
+  /**
+   * Create or update a session.
+   */
   set(session: Session): void {
     this.db.query(`
       INSERT OR REPLACE INTO thread_bindings
@@ -97,18 +134,22 @@ export class SqliteStore {
     );
   }
 
+  /**
+   * Update specific fields of a session.
+   * Returns false if session not found.
+   */
   update(threadId: string, updates: SessionUpdate): boolean {
     const session = this.get(threadId);
     if (!session) return false;
 
-    const updated: Session = {
-      ...session,
-      ...updates,
-    };
-    this.set(updated);
+    this.set({ ...session, ...updates });
     return true;
   }
 
+  /**
+   * Delete a session by thread ID.
+   * Returns true if a session was deleted.
+   */
   delete(threadId: string): boolean {
     const result = this.db.query(`
       DELETE FROM thread_bindings WHERE thread_id = ?
@@ -116,36 +157,20 @@ export class SqliteStore {
     return result.changes > 0;
   }
 
+  /**
+   * List all sessions for a guild, ordered by last activity.
+   */
   listByGuild(guildId: string): Session[] {
-    const rows = this.db.query<{
-      thread_id: string;
-      channel_id: string;
-      guild_id: string;
-      name: string;
-      project_dir: string;
-      session_id: string | null;
-      model: string;
-      status: string;
-      created_at: number;
-      last_activity: number;
-    }, [string]>(`
+    const rows = this.db.query<ThreadBindingRow, [string]>(`
       SELECT * FROM thread_bindings WHERE guild_id = ? ORDER BY last_activity DESC
     `).all(guildId);
 
-    return rows.map(row => ({
-      id: row.thread_id,
-      channelId: row.channel_id,
-      guildId: row.guild_id,
-      name: row.name,
-      projectDir: row.project_dir,
-      claudeSessionId: row.session_id || undefined,
-      model: row.model as Session['model'],
-      status: row.status as Session['status'],
-      createdAt: row.created_at,
-      lastActivity: row.last_activity,
-    }));
+    return rows.map(rowToSession);
   }
 
+  /**
+   * Save a message record for cost tracking.
+   */
   saveMessage(record: MessageRecord): void {
     this.db.query(`
       INSERT INTO message_history (thread_id, session_id, message_type, content, cost_usd, created_at)
@@ -160,39 +185,19 @@ export class SqliteStore {
     );
   }
 
+  /**
+   * Get cost summary for a thread or all threads.
+   */
   getTotalCost(threadId?: string): CostSummary {
-    if (threadId) {
-      const row = this.db.query<{
-        total_cost: number | null;
-        message_count: number;
-        sessions: number;
-      }, [string]>(`
-        SELECT
-          SUM(cost_usd) as total_cost,
-          COUNT(*) as message_count,
-          COUNT(DISTINCT session_id) as sessions
-        FROM message_history
-        WHERE thread_id = ?
-      `).get(threadId);
+    const query = threadId
+      ? `SELECT SUM(cost_usd) as total_cost, COUNT(*) as message_count, COUNT(DISTINCT session_id) as sessions
+         FROM message_history WHERE thread_id = ?`
+      : `SELECT SUM(cost_usd) as total_cost, COUNT(*) as message_count, COUNT(DISTINCT session_id) as sessions
+         FROM message_history`;
 
-      return {
-        totalCost: row?.total_cost || 0,
-        messageCount: row?.message_count || 0,
-        sessions: row?.sessions || 0,
-      };
-    }
-
-    const row = this.db.query<{
-      total_cost: number | null;
-      message_count: number;
-      sessions: number;
-    }, []>(`
-      SELECT
-        SUM(cost_usd) as total_cost,
-        COUNT(*) as message_count,
-        COUNT(DISTINCT session_id) as sessions
-      FROM message_history
-    `).get();
+    const row = threadId
+      ? this.db.query<{ total_cost: number | null; message_count: number; sessions: number }, [string]>(query).get(threadId)
+      : this.db.query<{ total_cost: number | null; message_count: number; sessions: number }, []>(query).get();
 
     return {
       totalCost: row?.total_cost || 0,
@@ -201,10 +206,17 @@ export class SqliteStore {
     };
   }
 
+  /**
+   * Clear the Claude session ID for a thread.
+   * Next message will start a new conversation.
+   */
   clearSession(threadId: string): boolean {
     return this.update(threadId, { claudeSessionId: undefined });
   }
 
+  /**
+   * Get recent messages for a thread.
+   */
   getMessages(threadId: string, limit: number = 50): Array<{
     sessionId: string;
     messageType: string;
@@ -232,9 +244,13 @@ export class SqliteStore {
     }));
   }
 
+  /**
+   * Close the database connection.
+   */
   close(): void {
     this.db.close();
   }
 }
 
+/** Global store instance */
 export const store = new SqliteStore();

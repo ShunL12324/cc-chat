@@ -1,11 +1,22 @@
+/**
+ * Output Formatter
+ *
+ * Formats Claude CLI output for Discord display. Handles tool usage,
+ * assistant messages, results, errors, and various status displays.
+ *
+ * Discord message limits:
+ * - 2000 characters per message
+ * - Markdown formatting supported
+ * - Code blocks with syntax highlighting
+ */
+
 import { EmbedBuilder } from 'discord.js';
 import type { ToolUseContent, AssistantMessage, ResultMessage } from '../types/index.js';
 
-// Emoji 规范
-// 状态: ✅ 成功 | ❌ 错误 | ⏹️ 停止 | ⚠️ 警告 | ⏳ 进行中
-// 信息: 📁 目录 | 🤖 模型 | 🔗 会话 | 💰 费用 | ⏱️ 时间 | 🔄 轮次
-// 导航: ⬆️ 上级 | 🔄 刷新 | 📌 创建
-
+/**
+ * Icon mapping for tool visualization.
+ * Maps tool names to emoji icons for quick visual identification.
+ */
 const TOOL_ICONS: Record<string, string> = {
   // File operations
   Read: '📖',
@@ -48,8 +59,13 @@ const TOOL_ICONS: Record<string, string> = {
   default: '🔧',
 };
 
+/** Maximum length for Discord messages to stay under 2000 char limit */
 const MAX_MESSAGE_LENGTH = 1900;
 
+/**
+ * Get the icon for a tool by name.
+ * Supports prefix matching for MCP tools.
+ */
 function getToolIcon(toolName: string): string {
   if (TOOL_ICONS[toolName]) {
     return TOOL_ICONS[toolName];
@@ -64,12 +80,19 @@ function getToolIcon(toolName: string): string {
   return TOOL_ICONS.default;
 }
 
+/**
+ * Format a single tool use for detailed display.
+ */
 export function formatToolUse(toolUse: ToolUseContent): string {
   const icon = getToolIcon(toolUse.name);
   const input = formatToolInput(toolUse.name, toolUse.input);
   return `${icon} **${toolUse.name}**\n${input}`;
 }
 
+/**
+ * Format tool history as a compact list.
+ * Shows checkmarks for completed tools, arrow for current.
+ */
 export function formatToolHistory(tools: ToolUseContent[]): string {
   if (tools.length === 0) return '⏳ Thinking...';
 
@@ -84,19 +107,23 @@ export function formatToolHistory(tools: ToolUseContent[]): string {
   return lines.join('\n');
 }
 
+/**
+ * Format tool input as a short summary for history display.
+ */
 function formatToolInputShort(name: string, input: Record<string, unknown>): string {
   switch (name) {
     case 'Read':
     case 'Write':
     case 'Edit':
-    case 'NotebookEdit':
-      const path = String(input.file_path || '');
-      return `\`${shortenPath(path)}\``;
-    case 'Bash':
-      const cmd = String(input.command || '');
-      return `\`${truncate(cmd.split('\n')[0], 40)}\``;
+    case 'NotebookEdit': {
+      const filePath = String(input.file_path || input.notebook_path || '');
+      return `\`${shortenPath(filePath)}\``;
+    }
+    case 'Bash': {
+      const command = String(input.command || '');
+      return `\`${truncate(command.split('\n')[0], 40)}\``;
+    }
     case 'Glob':
-      return `\`${input.pattern}\``;
     case 'Grep':
       return `\`${input.pattern}\``;
     case 'Task':
@@ -106,46 +133,55 @@ function formatToolInputShort(name: string, input: Record<string, unknown>): str
     case 'WebSearch':
       return `"${truncate(String(input.query || ''), 30)}"`;
     default:
+      // For MCP tools, show first parameter value
       if (name.startsWith('mcp__')) {
         const keys = Object.keys(input);
         if (keys.length > 0) {
-          const val = String(input[keys[0]] || '');
-          return truncate(val, 30);
+          const value = String(input[keys[0]] || '');
+          return truncate(value, 30);
         }
       }
       return '';
   }
 }
 
+/**
+ * Format tool input for detailed display.
+ */
 function formatToolInput(name: string, input: Record<string, unknown>): string {
   switch (name) {
     case 'Read':
-      return `\`${input.file_path}\``;
     case 'Write':
-      return `\`${input.file_path}\``;
     case 'Edit':
       return `\`${input.file_path}\``;
     case 'NotebookEdit':
       return `\`${input.notebook_path}\``;
-    case 'Bash':
-      const cmd = String(input.command || '');
-      return `\`\`\`bash\n${truncate(cmd, 200)}\n\`\`\``;
+    case 'Bash': {
+      const command = String(input.command || '');
+      return `\`\`\`bash\n${truncate(command, 200)}\n\`\`\``;
+    }
     case 'Glob':
       return `Pattern: \`${input.pattern}\``;
-    case 'Grep':
-      return `Search: \`${input.pattern}\`${input.path ? ` in \`${input.path}\`` : ''}`;
+    case 'Grep': {
+      const pathInfo = input.path ? ` in \`${input.path}\`` : '';
+      return `Search: \`${input.pattern}\`${pathInfo}`;
+    }
     case 'Task':
       return `${input.description || 'Running task...'}`;
     case 'WebFetch':
       return `\`${input.url}\``;
     case 'WebSearch':
       return `"${input.query}"`;
-    default:
+    default: {
       const json = JSON.stringify(input, null, 2);
       return `\`\`\`json\n${truncate(json, 300)}\n\`\`\``;
+    }
   }
 }
 
+/**
+ * Extract and format text content from an assistant message.
+ */
 export function formatAssistantMessage(msg: AssistantMessage): string {
   const textContent = msg.message.content
     .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
@@ -155,6 +191,9 @@ export function formatAssistantMessage(msg: AssistantMessage): string {
   return truncate(textContent, MAX_MESSAGE_LENGTH);
 }
 
+/**
+ * Format a result message as a short status line.
+ */
 export function formatResult(msg: ResultMessage): string {
   const icon = msg.subtype === 'success' ? '✅' :
                msg.subtype === 'error' ? '❌' :
@@ -171,6 +210,10 @@ export function formatResult(msg: ResultMessage): string {
   return stats.length > 0 ? `${icon} ${stats.join(' · ')}` : icon;
 }
 
+/**
+ * Format a result message as a rich embed.
+ * Includes color coding, stats fields, and error details.
+ */
 export function formatResultEmbed(msg: ResultMessage): EmbedBuilder {
   const embed = new EmbedBuilder();
 
@@ -213,10 +256,16 @@ export function formatResultEmbed(msg: ResultMessage): EmbedBuilder {
   return embed;
 }
 
+/**
+ * Format an error message for display.
+ */
 export function formatError(error: string): string {
   return `❌ **Error**\n\`\`\`\n${truncate(error, 500)}\n\`\`\``;
 }
 
+/**
+ * Format session info for display.
+ */
 export function formatSessionInfo(
   session: { claudeSessionId?: string; model: string; status: string; projectDir: string }
 ): string {
@@ -235,6 +284,9 @@ export function formatSessionInfo(
   return lines.join('\n');
 }
 
+/**
+ * Format a list of sessions for status display.
+ */
 export function formatStatusList(
   sessions: Array<{ id: string; name: string; status: string; model: string; lastActivity: number }>
 ): string {
@@ -251,6 +303,9 @@ export function formatStatusList(
   return lines.join('\n');
 }
 
+/**
+ * Format help text with available commands.
+ */
 export function formatHelp(): string {
   return `**Claude Code Discord Bot**
 
@@ -267,29 +322,68 @@ export function formatHelp(): string {
 \`/stop\` - Stop task
 
 📊 **Status**
-\`/status\` - All projects`;
+\`/status\` - All projects
+\`/check-update\` - Check for updates`;
 }
 
+/**
+ * Format update status for display.
+ */
+export function formatUpdateStatus(status: {
+  currentVersion: string;
+  pendingVersion: string | null;
+  hasPendingUpdate: boolean;
+}): string {
+  const lines: string[] = ['**Update Status**', ''];
+
+  lines.push(`📦 Current version: \`${status.currentVersion}\``);
+
+  if (status.hasPendingUpdate && status.pendingVersion) {
+    lines.push(`✅ Update \`${status.pendingVersion}\` downloaded`);
+    lines.push('');
+    lines.push('*Restart the service to apply the update*');
+  } else {
+    lines.push('✅ You are on the latest version');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Truncate text to a maximum length with ellipsis.
+ */
 function truncate(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
   return text.slice(0, maxLength - 3) + '...';
 }
 
+/**
+ * Shorten a file path to show only the last 2 components.
+ */
 function shortenPath(path: string): string {
   const parts = path.split(/[/\\]/);
   if (parts.length <= 3) return path;
   return `.../${parts.slice(-2).join('/')}`;
 }
 
+/**
+ * Shorten a URL to hostname and truncated path.
+ */
 function shortenUrl(url: string): string {
   try {
-    const u = new URL(url);
-    return u.hostname + (u.pathname.length > 20 ? u.pathname.slice(0, 17) + '...' : u.pathname);
+    const parsed = new URL(url);
+    const pathPart = parsed.pathname.length > 20
+      ? parsed.pathname.slice(0, 17) + '...'
+      : parsed.pathname;
+    return parsed.hostname + pathPart;
   } catch {
     return truncate(url, 40);
   }
 }
 
+/**
+ * Format a timestamp as relative time (e.g., "5m ago").
+ */
 function formatTimeAgo(timestamp: number): string {
   const diff = Date.now() - timestamp;
   const minutes = Math.floor(diff / 60000);
