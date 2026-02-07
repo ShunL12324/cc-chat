@@ -23,6 +23,7 @@ interface ThreadBindingRow {
   name: string;
   project_dir: string;
   session_id: string | null;
+  use_continue: number;
   model: string;
   status: string;
   created_at: number;
@@ -40,6 +41,7 @@ function rowToSession(row: ThreadBindingRow): Session {
     name: row.name,
     projectDir: row.project_dir,
     claudeSessionId: row.session_id || undefined,
+    useContinue: !!row.use_continue,
     model: row.model as Session['model'],
     status: row.status as Session['status'],
     createdAt: row.created_at,
@@ -78,6 +80,7 @@ export class SqliteStore {
         name TEXT NOT NULL,
         project_dir TEXT NOT NULL,
         session_id TEXT,
+        use_continue INTEGER DEFAULT 0,
         model TEXT DEFAULT 'sonnet',
         status TEXT DEFAULT 'idle',
         created_at INTEGER NOT NULL,
@@ -99,6 +102,13 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_message_thread ON message_history(thread_id);
       CREATE INDEX IF NOT EXISTS idx_message_session ON message_history(session_id);
     `);
+
+    // Migration: add use_continue column for existing databases
+    try {
+      this.db.exec(`ALTER TABLE thread_bindings ADD COLUMN use_continue INTEGER DEFAULT 0`);
+    } catch {
+      // Column already exists, ignore
+    }
   }
 
   /**
@@ -118,8 +128,8 @@ export class SqliteStore {
   set(session: Session): void {
     this.db.query(`
       INSERT OR REPLACE INTO thread_bindings
-      (thread_id, channel_id, guild_id, name, project_dir, session_id, model, status, created_at, last_activity)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (thread_id, channel_id, guild_id, name, project_dir, session_id, use_continue, model, status, created_at, last_activity)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       session.id,
       session.channelId,
@@ -127,6 +137,7 @@ export class SqliteStore {
       session.name,
       session.projectDir,
       session.claudeSessionId || null,
+      session.useContinue ? 1 : 0,
       session.model,
       session.status,
       session.createdAt,

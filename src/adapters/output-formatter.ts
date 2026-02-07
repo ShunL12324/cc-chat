@@ -203,8 +203,15 @@ export function formatResult(msg: ResultMessage): string {
   if (msg.duration_ms !== undefined) {
     stats.push(`${(msg.duration_ms / 1000).toFixed(1)}s`);
   }
-  if (msg.cost_usd !== undefined) {
-    stats.push(`$${msg.cost_usd.toFixed(4)}`);
+  if (msg.total_cost_usd !== undefined) {
+    stats.push(`$${msg.total_cost_usd.toFixed(4)}`);
+  }
+  if (msg.usage) {
+    const totalTokens = (msg.usage.input_tokens || 0) + (msg.usage.output_tokens || 0);
+    if (totalTokens > 0) {
+      const formatted = totalTokens >= 1000 ? `${(totalTokens / 1000).toFixed(1)}k` : String(totalTokens);
+      stats.push(`${formatted} tokens`);
+    }
   }
 
   return stats.length > 0 ? `${icon} ${stats.join(' · ')}` : icon;
@@ -236,8 +243,8 @@ export function formatResultEmbed(msg: ResultMessage): EmbedBuilder {
 
   const fields: { name: string; value: string; inline: boolean }[] = [];
 
-  if (msg.cost_usd !== undefined) {
-    fields.push({ name: '💰 Cost', value: `$${msg.cost_usd.toFixed(4)}`, inline: true });
+  if (msg.total_cost_usd !== undefined) {
+    fields.push({ name: '💰 Cost', value: `$${msg.total_cost_usd.toFixed(4)}`, inline: true });
   }
 
   if (msg.duration_ms !== undefined) {

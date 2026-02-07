@@ -182,7 +182,7 @@ export async function runClaude(
     return {
       success: result?.subtype === 'success',
       sessionId,
-      costUsd: result?.cost_usd,
+      costUsd: result?.total_cost_usd,
       durationMs: result?.duration_ms,
       error: result?.is_error ? result.result : undefined,
     };

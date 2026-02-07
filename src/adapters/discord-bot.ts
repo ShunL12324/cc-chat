@@ -15,6 +15,7 @@ import {
   Client,
   GatewayIntentBits,
   ChannelType,
+  MessageFlags,
   type Message,
   type ChatInputCommandInteraction,
   type AutocompleteInteraction,
@@ -177,7 +178,7 @@ export class DiscordBot {
    */
   private async handleCommand(interaction: ChatInputCommandInteraction): Promise<void> {
     if (!this.isAllowedUser(interaction.user.id)) {
-      await interaction.reply({ content: 'You are not authorized.', ephemeral: true });
+      await interaction.reply({ content: 'You are not authorized.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -230,24 +231,24 @@ export class DiscordBot {
     const path = interaction.options.getString('path', true);
 
     if (!existsSync(path)) {
-      await interaction.reply({ content: `Path does not exist: \`${path}\``, ephemeral: true });
+      await interaction.reply({ content: `Path does not exist: \`${path}\``, flags: MessageFlags.Ephemeral });
       return;
     }
 
     if (!statSync(path).isDirectory()) {
-      await interaction.reply({ content: `Path is not a directory: \`${path}\``, ephemeral: true });
+      await interaction.reply({ content: `Path is not a directory: \`${path}\``, flags: MessageFlags.Ephemeral });
       return;
     }
 
     const channel = interaction.channel;
     if (!channel || channel.type !== ChannelType.GuildText) {
-      await interaction.reply({ content: 'This command must be used in a text channel.', ephemeral: true });
+      await interaction.reply({ content: 'This command must be used in a text channel.', flags: MessageFlags.Ephemeral });
       return;
     }
 
     const guildId = interaction.guildId;
     if (!guildId) {
-      await interaction.reply({ content: 'This command must be used in a server.', ephemeral: true });
+      await interaction.reply({ content: 'This command must be used in a server.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -313,7 +314,7 @@ export class DiscordBot {
     const currentPath = pathArg || (config.projectRoots[0] || homedir());
 
     if (!existsSync(currentPath)) {
-      await interaction.reply({ content: `Path does not exist: \`${currentPath}\``, ephemeral: true });
+      await interaction.reply({ content: `Path does not exist: \`${currentPath}\``, flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -408,7 +409,7 @@ export class DiscordBot {
     if (interaction.replied || interaction.deferred) {
       await interaction.editReply({ content, components: rows });
     } else {
-      await interaction.reply({ content, components: rows, ephemeral: true });
+      await interaction.reply({ content, components: rows, flags: MessageFlags.Ephemeral });
     }
   }
 
@@ -420,12 +421,12 @@ export class DiscordBot {
     const session = this.getThreadSession(interaction);
 
     if (!session) {
-      await interaction.reply({ content: 'This command must be used in a project thread.', ephemeral: true });
+      await interaction.reply({ content: 'This command must be used in a project thread.', flags: MessageFlags.Ephemeral });
       return;
     }
 
     if (subcommand === 'info') {
-      await interaction.reply({ content: formatSessionInfo(session), ephemeral: true });
+      await interaction.reply({ content: formatSessionInfo(session), flags: MessageFlags.Ephemeral });
     } else if (subcommand === 'clear') {
       store.clearSession(session.id);
       await interaction.reply({ content: 'Session cleared. Next message will start a new conversation.' });
@@ -438,11 +439,11 @@ export class DiscordBot {
   private async handleStatusCommand(interaction: ChatInputCommandInteraction): Promise<void> {
     const guildId = interaction.guildId;
     if (!guildId) {
-      await interaction.reply({ content: 'This command must be used in a server.', ephemeral: true });
+      await interaction.reply({ content: 'This command must be used in a server.', flags: MessageFlags.Ephemeral });
       return;
     }
     const sessions = store.listByGuild(guildId);
-    await interaction.reply({ content: formatStatusList(sessions), ephemeral: true });
+    await interaction.reply({ content: formatStatusList(sessions), flags: MessageFlags.Ephemeral });
   }
 
   /**
@@ -452,7 +453,7 @@ export class DiscordBot {
     const session = this.getThreadSession(interaction);
 
     if (!session) {
-      await interaction.reply({ content: 'This command must be used in a project thread.', ephemeral: true });
+      await interaction.reply({ content: 'This command must be used in a project thread.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -461,7 +462,7 @@ export class DiscordBot {
       store.update(session.id, { status: 'idle' });
       await interaction.reply({ content: 'Task stopped.' });
     } else {
-      await interaction.reply({ content: 'No running task to stop.', ephemeral: true });
+      await interaction.reply({ content: 'No running task to stop.', flags: MessageFlags.Ephemeral });
     }
   }
 
@@ -472,7 +473,7 @@ export class DiscordBot {
     const session = this.getThreadSession(interaction);
 
     if (!session) {
-      await interaction.reply({ content: 'This command must be used in a project thread.', ephemeral: true });
+      await interaction.reply({ content: 'This command must be used in a project thread.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -489,7 +490,7 @@ export class DiscordBot {
     const channel = interaction.channel;
 
     if (!session || !channel || !channel.isThread()) {
-      await interaction.reply({ content: 'This command must be used in a project thread.', ephemeral: true });
+      await interaction.reply({ content: 'This command must be used in a project thread.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -501,14 +502,14 @@ export class DiscordBot {
    * Handle /help command - show available commands.
    */
   private async handleHelpCommand(interaction: ChatInputCommandInteraction): Promise<void> {
-    await interaction.reply({ content: formatHelp(), ephemeral: true });
+    await interaction.reply({ content: formatHelp(), flags: MessageFlags.Ephemeral });
   }
 
   /**
    * Handle /check-update command - check for and display update status.
    */
   private async handleCheckUpdateCommand(interaction: ChatInputCommandInteraction): Promise<void> {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const { checkForUpdates, getUpdateStatus } = await import('../core/auto-updater.js');
 
@@ -577,7 +578,7 @@ export class DiscordBot {
    */
   private async handleButton(interaction: ButtonInteraction): Promise<void> {
     if (!this.isAllowedUser(interaction.user.id)) {
-      await interaction.reply({ content: 'You are not authorized.', ephemeral: true });
+      await interaction.reply({ content: 'You are not authorized.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -589,7 +590,7 @@ export class DiscordBot {
 
     const path = getPathFromId(pathId);
     if (!path) {
-      await interaction.reply({ content: 'Path expired. Please use `/ls` again.', ephemeral: true });
+      await interaction.reply({ content: 'Path expired. Please use `/ls` again.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -599,13 +600,13 @@ export class DiscordBot {
     } else if (action === 'create' || action === 'resume') {
       const channel = interaction.channel;
       if (!channel || channel.type !== ChannelType.GuildText) {
-        await interaction.reply({ content: 'Cannot create thread here.', ephemeral: true });
+        await interaction.reply({ content: 'Cannot create thread here.', flags: MessageFlags.Ephemeral });
         return;
       }
 
       const guildId = interaction.guildId;
       if (!guildId) {
-        await interaction.reply({ content: 'This action must be used in a server.', ephemeral: true });
+        await interaction.reply({ content: 'This action must be used in a server.', flags: MessageFlags.Ephemeral });
         return;
       }
 
@@ -664,7 +665,9 @@ export class DiscordBot {
       // Process any queued messages
       let queued: ReturnType<typeof processManager.dequeue>;
       while ((queued = processManager.dequeue(session.id))) {
-        await this.executeClaudeTask(session, queued.content, channel);
+        // Re-read session from store to get latest claudeSessionId from previous run
+        const freshSession = store.get(session.id) || session;
+        await this.executeClaudeTask(freshSession, queued.content, channel);
         queued.resolve();
       }
     } finally {
@@ -779,7 +782,7 @@ export class DiscordBot {
               sessionId: msg.session_id,
               messageType: 'result',
               content: JSON.stringify(msg),
-              costUsd: msg.cost_usd,
+              costUsd: msg.total_cost_usd,
               createdAt: Date.now(),
             });
           },

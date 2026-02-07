@@ -77,6 +77,21 @@ export interface UserMessage {
   message: ContentBlock;
   /** Session identifier */
   session_id: string;
+  /** Structured tool result data (present when message contains tool results) */
+  tool_use_result?: ToolUseResultData;
+}
+
+/**
+ * Structured data from a tool use result in a user message.
+ * Provides parsed tool execution details beyond the raw content block.
+ */
+export interface ToolUseResultData {
+  /** Name of the tool that was executed */
+  tool_name: string;
+  /** Tool use ID this result corresponds to */
+  tool_use_id: string;
+  /** Whether the tool execution resulted in an error */
+  is_error?: boolean;
 }
 
 /**
@@ -210,16 +225,50 @@ export interface ResultMessage {
   result?: string;
   /** Whether the result is an error */
   is_error?: boolean;
-  /** Cost in USD for this request */
-  cost_usd?: number;
+  /** Cumulative session cost in USD (primary cost field from CLI) */
+  total_cost_usd?: number;
   /** Total duration in milliseconds */
   duration_ms?: number;
   /** Time spent on API calls in milliseconds */
   duration_api_ms?: number;
   /** Number of conversation turns */
   num_turns?: number;
-  /** Cumulative session cost in USD */
-  total_cost_usd?: number;
+  /** Aggregated token usage for this run */
+  usage?: ResultUsage;
+  /** Per-model token usage breakdown */
+  modelUsage?: Record<string, ModelUsageEntry>;
+}
+
+/**
+ * Aggregated token usage statistics from a result message.
+ */
+export interface ResultUsage {
+  /** Total input tokens consumed */
+  input_tokens: number;
+  /** Total output tokens generated */
+  output_tokens: number;
+  /** Tokens used to create new cache entries */
+  cache_creation_input_tokens?: number;
+  /** Tokens read from cache */
+  cache_read_input_tokens?: number;
+  /** Server-side tokens (tool execution, etc.) */
+  server_tool_use_input_tokens?: number;
+}
+
+/**
+ * Per-model token usage entry in modelUsage breakdown.
+ */
+export interface ModelUsageEntry {
+  /** Input tokens for this model */
+  input_tokens: number;
+  /** Output tokens for this model */
+  output_tokens: number;
+  /** Cache creation tokens for this model */
+  cache_creation_input_tokens?: number;
+  /** Cache read tokens for this model */
+  cache_read_input_tokens?: number;
+  /** Server-side tokens for this model */
+  server_tool_use_input_tokens?: number;
 }
 
 /**
