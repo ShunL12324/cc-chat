@@ -17,8 +17,8 @@
 import { loadConfig, validateConfig } from './config.js';
 import { DiscordBot } from './adapters/discord-bot.js';
 import { store } from './store/sqlite-store.js';
-import { applyPendingUpdate, checkForUpdates, startPeriodicUpdateCheck } from './core/auto-updater.js';
-import { initLogger } from './core/logger.js';
+import { applyPendingUpdate, checkForUpdates, startPeriodicUpdateCheck, stopPeriodicUpdateCheck } from './core/auto-updater.js';
+import { initLogger, flushLogger, getLogger } from './core/logger.js';
 
 /**
  * Main application entry point.
@@ -30,10 +30,12 @@ async function main() {
   // Initialize logger (writes to app directory)
   initLogger();
 
+  const log = getLogger();
+
   // Apply pending update if exists (before anything else)
   applyPendingUpdate();
 
-  console.log('cc-chat starting...');
+  log.info('cc-chat starting...');
 
   // Check for updates (non-blocking)
   checkForUpdates().catch(() => {});
@@ -45,7 +47,7 @@ async function main() {
   try {
     validateConfig();
   } catch (error) {
-    console.error('Configuration error:', error);
+    log.error(error, 'Configuration error');
     process.exit(1);
   }
 
@@ -57,9 +59,11 @@ async function main() {
    * Stops the bot and closes database connections.
    */
   const shutdown = async () => {
-    console.log('\nShutting down...');
+    log.info('Shutting down...');
+    stopPeriodicUpdateCheck();
     await bot.stop();
     store.close();
+    flushLogger();
     process.exit(0);
   };
 
@@ -70,9 +74,9 @@ async function main() {
   // Start bot
   try {
     await bot.start();
-    console.log('Bot is running!');
+    log.info('Bot is running!');
   } catch (error) {
-    console.error('Failed to start bot:', error);
+    log.error(error, 'Failed to start bot');
     process.exit(1);
   }
 }

@@ -7,11 +7,13 @@
  * Features:
  * - Track running processes by ID (typically Discord thread ID)
  * - Message queueing for sequential processing
- * - Mutex locks to prevent race conditions
+ * - Mutex locks via async-mutex to prevent race conditions
  * - Graceful shutdown of all processes
  */
 
 import type { Subprocess } from 'bun';
+import type { ResultPromise } from 'execa';
+import { Mutex } from 'async-mutex';
 
 /**
  * A queued message waiting to be processed.
@@ -23,36 +25,9 @@ interface QueuedMessage {
   resolve: () => void;
 }
 
-/**
- * Async mutex lock for a single session.
- * Ensures only one task runs at a time per session.
- */
-class AsyncMutex {
-  private locked = false;
-  private waitQueue: (() => void)[] = [];
-
-  async acquire(): Promise<void> {
-    if (!this.locked) {
-      this.locked = true;
-      return;
-    }
-    return new Promise((resolve) => {
-      this.waitQueue.push(resolve);
-    });
-  }
-
-  release(): void {
-    const next = this.waitQueue.shift();
-    if (next) {
-      next();
-    } else {
-      this.locked = false;
-    }
-  }
-
-  isLocked(): boolean {
-    return this.locked;
-  }
+/** Wrapper to hold either a Bun subprocess or an execa process */
+interface ManagedProcess {
+  kill: () => void;
 }
 
 /**
@@ -63,10 +38,10 @@ class AsyncMutex {
  */
 export class ProcessManager {
   /** Map of process ID to running subprocess */
-  private running = new Map<string, Subprocess>();
+  private running = new Map<string, ManagedProcess>();
 
   /** Map of process ID to mutex lock */
-  private locks = new Map<string, AsyncMutex>();
+  private locks = new Map<string, Mutex>();
 
   /** Map of process ID to message queue */
   private queues = new Map<string, QueuedMessage[]>();
@@ -74,10 +49,10 @@ export class ProcessManager {
   /**
    * Get or create a mutex for a session.
    */
-  private getMutex(id: string): AsyncMutex {
+  private getMutex(id: string): Mutex {
     let mutex = this.locks.get(id);
     if (!mutex) {
-      mutex = new AsyncMutex();
+      mutex = new Mutex();
       this.locks.set(id, mutex);
     }
     return mutex;
@@ -85,7 +60,6 @@ export class ProcessManager {
 
   /**
    * Acquire lock for a session. Must call releaseLock when done.
-   * This ensures only one message is processed at a time per session.
    */
   async acquireLock(id: string): Promise<void> {
     await this.getMutex(id).acquire();
@@ -95,13 +69,27 @@ export class ProcessManager {
    * Release lock for a session.
    */
   releaseLock(id: string): void {
-    this.getMutex(id).release();
+    const mutex = this.locks.get(id);
+    if (mutex?.isLocked()) {
+      mutex.release();
+    }
   }
 
   /**
-   * Register a new process. Kills existing process with same ID if any.
+   * Register a new Bun subprocess. Kills existing process with same ID if any.
    */
   start(id: string, proc: Subprocess): void {
+    const existing = this.running.get(id);
+    if (existing) {
+      existing.kill();
+    }
+    this.running.set(id, proc);
+  }
+
+  /**
+   * Register an execa process. Kills existing process with same ID if any.
+   */
+  startExeca(id: string, proc: ResultPromise): void {
     const existing = this.running.get(id);
     if (existing) {
       existing.kill();
@@ -142,7 +130,7 @@ export class ProcessManager {
   /**
    * Get a running process by ID.
    */
-  get(id: string): Subprocess | undefined {
+  get(id: string): ManagedProcess | undefined {
     return this.running.get(id);
   }
 
@@ -203,6 +191,14 @@ export class ProcessManager {
       }
       this.queues.delete(id);
     }
+  }
+
+  /**
+   * Clean up mutex and queue for a session (e.g., on archive).
+   */
+  cleanup(id: string): void {
+    this.clearQueue(id);
+    this.locks.delete(id);
   }
 }
 

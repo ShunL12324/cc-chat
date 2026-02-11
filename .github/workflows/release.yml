@@ -29,6 +29,12 @@ jobs:
           bun build --compile --target=bun-darwin-x64 src/index.ts --outfile dist/cc-chat-mac-x64
           bun build --compile --target=bun-linux-x64 src/index.ts --outfile dist/cc-chat-linux
 
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum cc-chat-win.exe cc-chat-mac-arm64 cc-chat-mac-x64 cc-chat-linux > checksums.txt
+          cat checksums.txt
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
@@ -37,6 +43,7 @@ jobs:
             dist/cc-chat-mac-arm64
             dist/cc-chat-mac-x64
             dist/cc-chat-linux
+            dist/checksums.txt
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

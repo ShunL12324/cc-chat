@@ -1,84 +1,58 @@
 /**
- * Configuration Types
+ * Configuration Schemas
  *
- * Type definitions for the application configuration loaded from config.yaml.
- * Provides strong typing for all configuration sections.
+ * Zod schemas for the application configuration loaded from config.yaml.
+ * Provides runtime validation and type inference.
  */
 
-import type { ModelType } from './session.js';
+import { z } from 'zod/v4';
+import { ModelTypeSchema } from './session.js';
 
-/**
- * Discord bot connection settings.
- */
-export interface DiscordConfig {
-  /** Bot authentication token (required) */
-  token: string;
-  /** Discord application client ID (required) */
-  clientId: string;
-  /** Guild ID for development slash command registration (optional) */
-  guildId?: string;
-}
+export const DiscordConfigSchema = z.object({
+  token: z.string(),
+  clientId: z.string(),
+  guildId: z.string().optional(),
+});
 
-/**
- * Claude CLI execution settings.
- */
-export interface ClaudeConfig {
-  /** Path to the Claude CLI executable */
-  path: string;
-  /** Default model for new sessions */
-  defaultModel: ModelType;
-  /** Process timeout in milliseconds */
-  timeout: number;
-}
+export const ClaudeConfigSchema = z.object({
+  path: z.string(),
+  defaultModel: ModelTypeSchema,
+  timeout: z.number().positive(),
+});
 
-/**
- * Project directory settings.
- */
-export interface ProjectsConfig {
-  /** List of allowed project root directories */
-  roots: string[];
-}
+export const ProjectsConfigSchema = z.object({
+  roots: z.array(z.string()),
+});
 
-/**
- * Data storage settings.
- */
-export interface StorageConfig {
-  /** Path to the SQLite database file */
-  dbPath: string;
-}
+export const StorageConfigSchema = z.object({
+  dbPath: z.string(),
+});
 
-/**
- * Access control settings.
- */
-export interface AccessConfig {
-  /** Discord user IDs allowed to use the bot (empty = all users allowed) */
-  allowedUsers: string[];
-}
+export const AccessConfigSchema = z.object({
+  allowedUsers: z.array(z.string()),
+});
 
-/**
- * Complete application configuration.
- */
-export interface AppConfig {
-  /** Discord bot settings */
-  discord: DiscordConfig;
-  /** Claude CLI settings */
-  claude: ClaudeConfig;
-  /** Project directory settings */
-  projects: ProjectsConfig;
-  /** Storage settings */
-  storage: StorageConfig;
-  /** Access control settings */
-  access: AccessConfig;
-}
+export const AppConfigSchema = z.object({
+  discord: DiscordConfigSchema,
+  claude: ClaudeConfigSchema,
+  projects: ProjectsConfigSchema,
+  storage: StorageConfigSchema,
+  access: AccessConfigSchema,
+});
 
-/**
- * Raw configuration as loaded from YAML (before defaults applied).
- * All fields are optional to allow partial configuration.
- */
-export interface RawConfig {
-  discord?: Partial<DiscordConfig>;
-  claude?: Partial<ClaudeConfig>;
-  projects?: Partial<ProjectsConfig>;
-  storage?: Partial<StorageConfig>;
-  access?: Partial<AccessConfig>;
-}
+/** Raw configuration as loaded from YAML (before defaults applied). */
+export const RawConfigSchema = z.object({
+  discord: DiscordConfigSchema.partial().optional(),
+  claude: ClaudeConfigSchema.partial().optional(),
+  projects: ProjectsConfigSchema.partial().optional(),
+  storage: StorageConfigSchema.partial().optional(),
+  access: AccessConfigSchema.partial().optional(),
+}).optional();
+
+export type DiscordConfig = z.infer<typeof DiscordConfigSchema>;
+export type ClaudeConfig = z.infer<typeof ClaudeConfigSchema>;
+export type ProjectsConfig = z.infer<typeof ProjectsConfigSchema>;
+export type StorageConfig = z.infer<typeof StorageConfigSchema>;
+export type AccessConfig = z.infer<typeof AccessConfigSchema>;
+export type AppConfig = z.infer<typeof AppConfigSchema>;
+export type RawConfig = z.infer<typeof RawConfigSchema>;

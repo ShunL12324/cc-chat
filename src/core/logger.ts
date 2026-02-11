@@ -1,128 +1,104 @@
 /**
  * Logger
  *
- * File-based logging with automatic rotation and cleanup.
- * Overrides console.log and console.error to write to log files.
+ * Structured logging with pino + pino-roll for automatic file rotation.
  *
  * Features:
- * - Writes logs to {app-dir}/logs/cc-chat.log
- * - Rotates logs when they exceed MAX_LOG_SIZE_MB
- * - Keeps only MAX_LOG_FILES rotated files
- * - Timestamps and log levels for each entry
+ * - JSON structured logs to file via pino-roll
+ * - Automatic rotation by size (10MB) with retention (7 files)
+ * - Pretty console output in development
+ * - Overrides console.log/error for unified logging
  */
 
-import { existsSync, mkdirSync, statSync, readdirSync, unlinkSync, renameSync, appendFileSync } from 'fs';
+import pino from 'pino';
+import { existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 
-/** Maximum size of a log file before rotation (in MB) */
-const MAX_LOG_SIZE_MB = 10;
+/** Maximum size of a log file before rotation */
+const MAX_LOG_SIZE = 1024 * 1024 * 10; // 10MB
 
 /** Maximum number of rotated log files to keep */
 const MAX_LOG_FILES = 7;
 
-/** Directory containing log files */
-let logDir: string;
-
-/** Path to the current log file */
-let logFile: string;
+/** Global logger instance */
+let logger: pino.Logger;
 
 /**
  * Initialize the logger.
  *
- * Sets up log directory, rotates logs if needed, cleans old logs,
- * and overrides console.log/error to write to files.
+ * Sets up pino with pino-roll file transport (rotation + retention)
+ * and overrides console.log/error to route through pino.
  */
 export function initLogger(): void {
-  // Use directory where the executable is located
   const appDir = dirname(process.execPath);
-  logDir = join(appDir, 'logs');
-  logFile = join(logDir, 'cc-chat.log');
+  const logDir = join(appDir, 'logs');
+  const logFile = join(logDir, 'cc-chat.log');
 
   // Create logs directory if it doesn't exist
   if (!existsSync(logDir)) {
     mkdirSync(logDir, { recursive: true });
   }
 
-  // Rotate current log if it exceeds size limit
-  rotateLogsIfNeeded();
+  logger = pino({
+    level: 'info',
+    timestamp: pino.stdTimeFunctions.isoTime,
+  }, pino.transport({
+    targets: [
+      // File transport with rotation
+      {
+        target: 'pino-roll',
+        options: {
+          file: logFile,
+          frequency: 'daily',
+          limit: { count: MAX_LOG_FILES },
+          size: MAX_LOG_SIZE,
+          mkdir: true,
+        },
+        level: 'info',
+      },
+      // Pretty console output
+      {
+        target: 'pino-pretty',
+        options: {
+          colorize: true,
+          translateTime: 'SYS:HH:MM:ss',
+          ignore: 'pid,hostname',
+        },
+        level: 'info',
+      },
+    ],
+  }));
 
-  // Remove old rotated logs beyond retention limit
-  cleanOldLogs();
-
-  // Override console methods to also write to file
+  // Override console methods to route through pino
   const originalLog = console.log;
   const originalError = console.error;
 
   console.log = (...args: unknown[]) => {
-    const message = args.map(a => String(a)).join(' ');
-    writeLog('INFO', message);
-    originalLog.apply(console, args);
+    const message = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+    logger.info(message);
   };
 
   console.error = (...args: unknown[]) => {
-    const message = args.map(a => String(a)).join(' ');
-    writeLog('ERROR', message);
-    originalError.apply(console, args);
+    const message = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+    logger.error(message);
   };
 }
 
 /**
- * Write a log entry to the current log file.
+ * Get the pino logger instance for direct structured logging.
  */
-function writeLog(level: string, message: string): void {
-  if (!logFile) return;
-
-  const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
-  const line = `${timestamp} [${level}] ${message}\n`;
-
-  try {
-    appendFileSync(logFile, line, 'utf-8');
-  } catch {
-    // Ignore write errors silently
+export function getLogger(): pino.Logger {
+  if (!logger) {
+    logger = pino({ level: 'info' });
   }
+  return logger;
 }
 
 /**
- * Rotate the current log file if it exceeds the size limit.
- * Creates a timestamped backup file.
+ * Flush pending log writes. Call before process exit.
  */
-function rotateLogsIfNeeded(): void {
-  if (!existsSync(logFile)) return;
-
-  try {
-    const stats = statSync(logFile);
-    const sizeMB = stats.size / (1024 * 1024);
-
-    if (sizeMB > MAX_LOG_SIZE_MB) {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const rotatedFile = join(logDir, `cc-chat-${timestamp}.log`);
-      renameSync(logFile, rotatedFile);
-    }
-  } catch {
-    // Ignore rotation errors silently
-  }
-}
-
-/**
- * Remove old rotated log files beyond the retention limit.
- * Keeps the most recent MAX_LOG_FILES files.
- */
-function cleanOldLogs(): void {
-  try {
-    const files = readdirSync(logDir)
-      .filter(f => f.startsWith('cc-chat-') && f.endsWith('.log'))
-      .map(f => ({
-        name: f,
-        path: join(logDir, f),
-        mtime: statSync(join(logDir, f)).mtime.getTime(),
-      }))
-      .sort((a, b) => b.mtime - a.mtime);
-
-    // Remove files beyond the retention limit
-    for (const file of files.slice(MAX_LOG_FILES)) {
-      unlinkSync(file.path);
-    }
-  } catch {
-    // Ignore cleanup errors silently
+export function flushLogger(): void {
+  if (logger) {
+    logger.flush();
   }
 }

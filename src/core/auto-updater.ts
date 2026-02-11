@@ -6,14 +6,21 @@
  * running tasks.
  *
  * Update flow:
- * 1. Periodic checks fetch latest release from GitHub
- * 2. If new version found, download to {exe}.new
- * 3. On next startup, applyPendingUpdate() renames files
- * 4. Old version kept as {exe}.bak for rollback
+ * 1. Scheduled checks (via croner) fetch latest release from GitHub
+ * 2. Version comparison via semver (handles v-prefix, pre-releases, etc.)
+ * 3. If new version found, download to {exe}.new with integrity check
+ * 4. On next startup, applyPendingUpdate() renames files
+ * 5. Old version kept as {exe}.bak for rollback
+ * 6. Version file only promoted after successful apply
  */
 
-import { existsSync, readFileSync, writeFileSync, unlinkSync, renameSync, chmodSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync, renameSync, chmodSync, statSync } from 'fs';
 import { dirname, join } from 'path';
+import { createHash } from 'crypto';
+import { Cron } from 'croner';
+import { valid, gt, clean } from 'semver';
+import { z } from 'zod/v4';
+import { getLogger } from './logger.js';
 
 /** GitHub repository owner */
 const REPO_OWNER = 'ShunL12324';
@@ -25,8 +32,15 @@ const REPO_NAME = 'cc-chat';
 const BINARY_NAME = process.platform === 'win32' ? 'cc-chat-win.exe' :
                     process.platform === 'darwin' ? 'cc-chat-mac-arm64' : 'cc-chat-linux';
 
-/** Update check interval in milliseconds (1 hour) */
-const CHECK_INTERVAL = 60 * 60 * 1000;
+/** Zod schema for GitHub release API response */
+const GitHubReleaseSchema = z.object({
+  tag_name: z.string(),
+  assets: z.array(z.object({
+    name: z.string(),
+    browser_download_url: z.string().url(),
+    size: z.number(),
+  })),
+});
 
 /** Callback for update notifications */
 let onUpdateDownloaded: ((version: string) => void) | null = null;
@@ -37,40 +51,62 @@ let pendingUpdateVersion: string | null = null;
 /** Cached current version */
 let currentVersion: string | null = null;
 
-/**
- * Get the application directory (where executable is located).
- */
+/** Cron job for periodic update checks */
+let updateCron: Cron | null = null;
+
+// --- Path helpers ---
+
 function getAppDir(): string {
   return dirname(process.execPath);
 }
 
-/**
- * Get the path to the version file.
- */
 function getVersionFile(): string {
   return join(getAppDir(), '.version');
 }
 
-/**
- * Get the current executable path.
- */
+function getPendingVersionFile(): string {
+  return `${getVersionFile()}.pending`;
+}
+
 function getExePath(): string {
   return process.execPath;
 }
 
-/**
- * Get the path for the downloaded new version.
- */
 function getNewPath(): string {
   return `${getExePath()}.new`;
 }
 
-/**
- * Get the path for the backup of the previous version.
- */
 function getBackupPath(): string {
   return `${getExePath()}.bak`;
 }
+
+// --- Version helpers ---
+
+/**
+ * Normalize a version string (strip 'v' prefix, validate semver).
+ * Returns null if not a valid semver.
+ */
+function normalizeVersion(version: string): string | null {
+  return clean(version) ?? valid(version);
+}
+
+/**
+ * Check if `latest` is newer than `current` using semver.
+ * Falls back to string comparison if either is not valid semver.
+ */
+function isNewer(latest: string, current: string): boolean {
+  const latestClean = normalizeVersion(latest);
+  const currentClean = normalizeVersion(current);
+
+  if (latestClean && currentClean) {
+    return gt(latestClean, currentClean);
+  }
+
+  // Fallback: string comparison (handles 'unknown' case)
+  return latest !== current;
+}
+
+// --- Core functions ---
 
 /**
  * Apply pending update if .new file exists.
@@ -81,18 +117,20 @@ function getBackupPath(): string {
  * 2. Backup current executable to .bak
  * 3. Rename .new to current executable
  * 4. Set executable permissions on Unix
+ * 5. Promote pending version file to current
  */
 export function applyPendingUpdate(): void {
   const newPath = getNewPath();
   const exePath = getExePath();
   const backupPath = getBackupPath();
+  const pendingVersionFile = getPendingVersionFile();
   const versionFile = getVersionFile();
 
   if (!existsSync(newPath)) {
     return;
   }
 
-  console.log('[update] Applying pending update...');
+  getLogger().info('[update] Applying pending update...');
 
   try {
     // Remove old backup
@@ -111,9 +149,17 @@ export function applyPendingUpdate(): void {
       chmodSync(exePath, 0o755);
     }
 
-    console.log('[update] Update applied successfully');
+    // Promote pending version to current version
+    if (existsSync(pendingVersionFile)) {
+      const version = readFileSync(pendingVersionFile, 'utf-8').trim();
+      writeFileSync(versionFile, version, 'utf-8');
+      unlinkSync(pendingVersionFile);
+      currentVersion = version;
+    }
+
+    getLogger().info('[update] Update applied successfully');
   } catch (error) {
-    console.log(`[update] Failed to apply update: ${error}`);
+    getLogger().error(`[update] Failed to apply update: ${error}`);
     // Try to restore backup
     try {
       if (existsSync(backupPath) && !existsSync(exePath)) {
@@ -121,6 +167,9 @@ export function applyPendingUpdate(): void {
       }
       if (existsSync(newPath)) {
         unlinkSync(newPath);
+      }
+      if (existsSync(pendingVersionFile)) {
+        unlinkSync(pendingVersionFile);
       }
     } catch {
       // Ignore cleanup errors
@@ -152,11 +201,10 @@ export function getPendingUpdateVersion(): string | null {
 /**
  * Check for updates from GitHub releases.
  * Downloads new version to .new file if available.
- *
- * @returns Object indicating if an update is available
+ * Uses semver for proper version comparison.
  */
 export async function checkForUpdates(): Promise<{ hasUpdate: boolean; version?: string }> {
-  console.log('[update] Checking for updates...');
+  getLogger().info('[update] Checking for updates...');
 
   try {
     const response = await fetch(
@@ -165,58 +213,109 @@ export async function checkForUpdates(): Promise<{ hasUpdate: boolean; version?:
     );
 
     if (!response.ok) {
-      console.log('[update] Failed to check for updates');
+      getLogger().error(`[update] GitHub API returned ${response.status}`);
       return { hasUpdate: false };
     }
 
-    const release = await response.json() as {
-      tag_name: string;
-      assets: Array<{ name: string; browser_download_url: string }>;
-    };
+    const json = await response.json();
+    const parsed = GitHubReleaseSchema.safeParse(json);
 
+    if (!parsed.success) {
+      getLogger().error(`[update] Invalid GitHub release response: ${JSON.stringify(parsed.error.issues).slice(0, 200)}`);
+      return { hasUpdate: false };
+    }
+
+    const release = parsed.data;
     const latestTag = release.tag_name;
     const current = getCurrentVersion();
 
     // Already have pending update for this version
     if (existsSync(getNewPath()) && pendingUpdateVersion === latestTag) {
-      console.log(`[update] Update ${latestTag} already downloaded, pending restart`);
+      getLogger().info(`[update] Update ${latestTag} already downloaded, pending restart`);
       return { hasUpdate: true, version: latestTag };
     }
 
-    if (current === latestTag) {
-      console.log(`[update] Already on latest version: ${latestTag}`);
+    // Semver comparison
+    if (!isNewer(latestTag, current)) {
+      getLogger().info(`[update] Already on latest version: ${current}`);
       return { hasUpdate: false };
     }
 
-    console.log(`[update] New version available: ${latestTag} (current: ${current})`);
+    getLogger().info(`[update] New version available: ${latestTag} (current: ${current})`);
 
     // Find download URL
     const asset = release.assets.find(a => a.name === BINARY_NAME);
     if (!asset) {
-      console.log('[update] No matching binary found');
+      getLogger().error(`[update] No matching binary found for ${BINARY_NAME}`);
       return { hasUpdate: false };
     }
 
-    console.log('[update] Downloading...');
+    getLogger().info(`[update] Downloading ${BINARY_NAME} (${(asset.size / 1024 / 1024).toFixed(1)}MB)...`);
+
+    // Download checksums file for integrity verification
+    const checksumAsset = release.assets.find(a => a.name === 'checksums.txt');
+    let expectedHash: string | null = null;
+
+    if (checksumAsset) {
+      try {
+        const checksumResponse = await fetch(checksumAsset.browser_download_url);
+        if (checksumResponse.ok) {
+          const checksumText = await checksumResponse.text();
+          // Format: "<hash>  <filename>" (sha256sum output)
+          const line = checksumText.split('\n').find(l => l.includes(BINARY_NAME));
+          if (line) {
+            expectedHash = line.trim().split(/\s+/)[0];
+          }
+        }
+      } catch {
+        getLogger().error('[update] Failed to download checksums, skipping hash verification');
+      }
+    }
 
     const downloadResponse = await fetch(asset.browser_download_url);
     if (!downloadResponse.ok) {
-      console.log('[update] Download failed');
+      getLogger().error(`[update] Download failed: ${downloadResponse.status}`);
       return { hasUpdate: false };
     }
 
     const buffer = await downloadResponse.arrayBuffer();
+
+    // Integrity check: verify downloaded size matches expected
+    if (buffer.byteLength !== asset.size) {
+      getLogger().error(`[update] Size mismatch: expected ${asset.size}, got ${buffer.byteLength}`);
+      return { hasUpdate: false };
+    }
+
+    // SHA256 integrity check
+    if (expectedHash) {
+      const actualHash = createHash('sha256').update(Buffer.from(buffer)).digest('hex');
+      if (actualHash !== expectedHash) {
+        getLogger().error(`[update] SHA256 mismatch: expected ${expectedHash}, got ${actualHash}`);
+        return { hasUpdate: false };
+      }
+      getLogger().info(`[update] SHA256 verified: ${actualHash.slice(0, 16)}...`);
+    } else {
+      getLogger().info('[update] No checksum available, skipping hash verification');
+    }
+
     const newPath = getNewPath();
 
     // Write new file
     writeFileSync(newPath, Buffer.from(buffer));
 
-    // Update version file to new version
-    writeFileSync(getVersionFile(), latestTag, 'utf-8');
-    currentVersion = latestTag;
+    // Verify written file size
+    const writtenSize = statSync(newPath).size;
+    if (writtenSize !== asset.size) {
+      getLogger().error(`[update] Written file size mismatch: expected ${asset.size}, got ${writtenSize}`);
+      unlinkSync(newPath);
+      return { hasUpdate: false };
+    }
+
+    // Write version to pending file; only promote after successful apply
+    writeFileSync(getPendingVersionFile(), latestTag, 'utf-8');
     pendingUpdateVersion = latestTag;
 
-    console.log(`[update] Downloaded ${latestTag}, will apply on next restart`);
+    getLogger().info(`[update] Downloaded ${latestTag}, will apply on next restart`);
 
     // Notify callback
     if (onUpdateDownloaded) {
@@ -225,7 +324,7 @@ export async function checkForUpdates(): Promise<{ hasUpdate: boolean; version?:
 
     return { hasUpdate: true, version: latestTag };
   } catch (error) {
-    console.log(`[update] Update check failed: ${error}`);
+    getLogger().error(`[update] Update check failed: ${error}`);
     return { hasUpdate: false };
   }
 }
@@ -238,12 +337,27 @@ export function setUpdateCallback(callback: (version: string) => void): void {
 }
 
 /**
- * Start periodic update checks (runs every CHECK_INTERVAL).
+ * Start periodic update checks using croner.
+ * Runs every hour at minute 0. Can be stopped with stopPeriodicUpdateCheck().
  */
 export function startPeriodicUpdateCheck(): void {
-  setInterval(() => {
+  // Stop existing cron if any
+  stopPeriodicUpdateCheck();
+
+  // Run every hour at minute 0
+  updateCron = new Cron('0 * * * *', () => {
     checkForUpdates().catch(() => {});
-  }, CHECK_INTERVAL);
+  });
+}
+
+/**
+ * Stop periodic update checks.
+ */
+export function stopPeriodicUpdateCheck(): void {
+  if (updateCron) {
+    updateCron.stop();
+    updateCron = null;
+  }
 }
 
 /**

@@ -2,16 +2,16 @@
  * Claude Runner
  *
  * Executes Claude CLI commands and streams output through the message parser.
- * Manages process lifecycle including timeout handling and graceful termination.
+ * Uses execa for robust process management with proper cleanup.
  *
  * Features:
  * - Spawns Claude CLI with stream-json output format
- * - Parses streaming JSON messages from stdout
+ * - Parses streaming JSON messages via EventEmitter-based parser
  * - Handles session resumption via --resume or --continue flags
  * - Configurable timeout with automatic process termination
  */
 
-import { spawn } from 'bun';
+import { execaCommand, type ResultPromise } from 'execa';
 import { MessageParser, type MessageParserHandlers } from './message-parser.js';
 import { processManager } from './process-manager.js';
 import type { ResultMessage, SystemInitMessage } from '../types/index.js';
@@ -58,10 +58,6 @@ export interface RunResult {
  *
  * Spawns a Claude process, streams output through handlers, and returns
  * the result when complete. Handles timeouts and process cleanup.
- *
- * @param options - Configuration for the Claude run
- * @param handlers - Callbacks for various message types
- * @returns Promise resolving to the run result
  */
 export async function runClaude(
   options: RunOptions,
@@ -78,8 +74,8 @@ export async function runClaude(
   } = options;
 
   // Build CLI arguments
-  const args = [
-    '-p', prompt,
+  const args: string[] = [
+    '-p', JSON.stringify(prompt),
     '--output-format', 'stream-json',
     '--verbose',
     '--dangerously-skip-permissions',
@@ -119,63 +115,44 @@ export async function runClaude(
   const parser = new MessageParser(wrappedHandlers);
 
   try {
-    const proc = spawn({
-      cmd: [config.claude.path, ...args],
+    const cmd = `${config.claude.path} ${args.join(' ')}`;
+    const proc = execaCommand(cmd, {
       cwd,
+      timeout,
+      reject: false,
       stdout: 'pipe',
       stderr: 'pipe',
       stdin: 'inherit',
+      // graceful shutdown: SIGTERM first, then SIGKILL after 5s
+      killSignal: 'SIGTERM',
+      forceKillAfterDelay: 5000,
     });
 
-    processManager.start(id, proc);
+    // Register with process manager for external stop capability
+    processManager.startExeca(id, proc);
 
-    // Set up timeout to kill long-running processes
-    const timeoutId = setTimeout(() => {
-      processManager.stop(id);
-    }, timeout);
-
-    // Stream and parse stdout
-    const reader = proc.stdout.getReader();
-    const decoder = new TextDecoder();
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        await parser.feed(chunk);
+    // Stream stdout through parser
+    if (proc.stdout) {
+      for await (const chunk of proc.stdout) {
+        const text = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
+        await parser.feed(text);
       }
-    } finally {
-      reader.releaseLock();
     }
 
     // Flush any remaining buffered data
     await parser.flush();
 
-    clearTimeout(timeoutId);
+    // Wait for process to complete
+    const execResult = await proc;
 
-    // Wait for process to exit
-    const exitCode = await proc.exited;
     processManager.remove(id);
 
     // Handle non-zero exit without a result message
-    if (exitCode !== 0 && !result) {
-      const stderrReader = proc.stderr.getReader();
-      let stderrText = '';
-      try {
-        while (true) {
-          const { done, value } = await stderrReader.read();
-          if (done) break;
-          stderrText += decoder.decode(value, { stream: true });
-        }
-      } finally {
-        stderrReader.releaseLock();
-      }
-
+    if (execResult.exitCode !== 0 && !result) {
       return {
         success: false,
         sessionId,
-        error: stderrText || `Process exited with code ${exitCode}`,
+        error: execResult.stderr || `Process exited with code ${execResult.exitCode}`,
       };
     }
 

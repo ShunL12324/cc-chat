@@ -81,21 +81,33 @@ src/
 - refactor: 重构
 - docs: 文档
 
-## 环境变量
+## 配置文件
 
-```env
-# Discord
-DISCORD_TOKEN=         # Bot Token
-DISCORD_CLIENT_ID=     # 应用 ID
-DISCORD_GUILD_ID=      # 服务器 ID（开发用）
+使用 `config.yaml` 配置应用：
 
-# 项目
-PROJECT_ROOTS=         # 项目根目录，逗号分隔
-DB_PATH=./data/cc-chat.db
+```yaml
+discord:
+  token: "your-bot-token"
+  clientId: "your-client-id"
+  guildId: ""  # 开发用，空则全局注册
 
-# 可选
-ALLOWED_USER_IDS=      # 允许的用户 ID，逗号分隔
+claude:
+  path: "claude"
+  defaultModel: "opus"
+  timeout: 900000
+
+projects:
+  roots:
+    - "C:/Users/Name/projects"
+
+storage:
+  dbPath: "./data/cc-chat.db"
+
+access:
+  allowedUsers: []  # 空数组允许所有人
 ```
+
+敏感值可用环境变量覆盖：`DISCORD_TOKEN`、`DISCORD_CLIENT_ID`、`DISCORD_GUILD_ID`
 
 ## 运行
 

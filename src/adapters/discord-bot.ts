@@ -43,6 +43,7 @@ import type { Session, ModelType, ToolUseContent, AssistantMessage, ResultMessag
 import { readdirSync, statSync, existsSync } from 'fs';
 import { basename, join, dirname } from 'path';
 import { homedir } from 'os';
+import { getLogger } from '../core/logger.js';
 
 /**
  * Path ID mapping for Discord button custom IDs.
@@ -128,7 +129,7 @@ export class DiscordBot {
    */
   async start(): Promise<void> {
     this.client.once('clientReady', () => {
-      console.log(`Logged in as ${this.client.user?.tag}`);
+      getLogger().info(`Logged in as ${this.client.user?.tag}`);
     });
 
     this.client.on('interactionCreate', async (interaction) => {
@@ -141,7 +142,7 @@ export class DiscordBot {
           await this.handleButton(interaction);
         }
       } catch (error) {
-        console.error('Interaction error:', error);
+        getLogger().error(error, 'Interaction error');
       }
     });
 
@@ -149,7 +150,7 @@ export class DiscordBot {
       try {
         await this.handleMessage(message);
       } catch (error) {
-        console.error('Message error:', error);
+        getLogger().error(error, 'Message error');
       }
     });
 
@@ -459,6 +460,7 @@ export class DiscordBot {
 
     const stopped = await processManager.stop(session.id);
     if (stopped) {
+      processManager.clearQueue(session.id);
       store.update(session.id, { status: 'idle' });
       await interaction.reply({ content: 'Task stopped.' });
     } else {
@@ -495,6 +497,7 @@ export class DiscordBot {
     }
 
     await interaction.reply({ content: 'Archiving thread...' });
+    processManager.cleanup(session.id);
     await channel.setArchived(true);
   }
 
@@ -762,9 +765,12 @@ export class DiscordBot {
             await updateStatus(formatToolHistory(recentTools));
           },
           onAssistant: async (msg: AssistantMessage) => {
-            const text = formatAssistantMessage(msg);
-            if (text) {
-              await sendNewMessage(text);
+            const chunks = formatAssistantMessage(msg);
+            for (const chunk of chunks) {
+              if (chunk.trim()) {
+                await sendNewMessage(chunk);
+                if (messageCount > maxMessages) break;
+              }
             }
           },
           onResult: async (msg: ResultMessage) => {

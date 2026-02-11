@@ -181,14 +181,179 @@ function formatToolInput(name: string, input: Record<string, unknown>): string {
 
 /**
  * Extract and format text content from an assistant message.
+ * Returns an array of chunks, each within Discord's message limit.
  */
-export function formatAssistantMessage(msg: AssistantMessage): string {
+export function formatAssistantMessage(msg: AssistantMessage): string[] {
   const textContent = msg.message.content
     .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
     .map(c => c.text)
     .join('\n');
 
-  return truncate(textContent, MAX_MESSAGE_LENGTH);
+  return splitMessage(textContent);
+}
+
+/**
+ * Represents a fenced code block's position in text.
+ */
+interface CodeBlock {
+  start: number;
+  end: number;
+  language: string;
+}
+
+/**
+ * Pre-scan text to find all fenced code blocks (``` delimited).
+ * Returns their start/end positions and language identifiers.
+ */
+function findCodeBlocks(text: string): CodeBlock[] {
+  const blocks: CodeBlock[] = [];
+  const regex = /^```(\w*)\n/gm;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    const start = match.index;
+    const language = match[1] || '';
+    // Find the closing ```
+    const closeIndex = text.indexOf('\n```', start + match[0].length);
+    if (closeIndex !== -1) {
+      const end = closeIndex + 4; // include the closing ```
+      blocks.push({ start, end, language });
+      regex.lastIndex = end;
+    }
+  }
+
+  return blocks;
+}
+
+/**
+ * Find the best split point within text, searching backwards from maxLength.
+ * Priority order:
+ * 1. Paragraph break (\n\n) — search from 50% onwards
+ * 2. Line break (\n) — search from 60% onwards
+ * 3. Sentence end (. ! ?) — search from 70% onwards
+ * 4. Space — search from 80% onwards
+ * 5. Hard cut at maxLength — fallback
+ */
+function findBestSplitPoint(text: string, maxLength: number): number {
+  if (text.length <= maxLength) return text.length;
+
+  const searchText = text.slice(0, maxLength);
+
+  // 1. Paragraph break — search from 50%
+  const paraThreshold = Math.floor(maxLength * 0.5);
+  const paraIndex = searchText.lastIndexOf('\n\n', maxLength);
+  if (paraIndex >= paraThreshold) {
+    return paraIndex + 2; // split after the double newline
+  }
+
+  // 2. Line break — search from 60%
+  const lineThreshold = Math.floor(maxLength * 0.6);
+  const lineIndex = searchText.lastIndexOf('\n', maxLength);
+  if (lineIndex >= lineThreshold) {
+    return lineIndex + 1; // split after the newline
+  }
+
+  // 3. Sentence end — search from 70%
+  const sentenceThreshold = Math.floor(maxLength * 0.7);
+  let sentenceIndex = -1;
+  for (let i = maxLength - 1; i >= sentenceThreshold; i--) {
+    if ((searchText[i] === '.' || searchText[i] === '!' || searchText[i] === '?') &&
+        i + 1 < searchText.length && searchText[i + 1] === ' ') {
+      sentenceIndex = i + 2; // split after ". "
+      break;
+    }
+  }
+  if (sentenceIndex >= sentenceThreshold) {
+    return sentenceIndex;
+  }
+
+  // 4. Space — search from 80%
+  const spaceThreshold = Math.floor(maxLength * 0.8);
+  const spaceIndex = searchText.lastIndexOf(' ', maxLength);
+  if (spaceIndex >= spaceThreshold) {
+    return spaceIndex + 1; // split after the space
+  }
+
+  // 5. Hard cut
+  return maxLength;
+}
+
+/**
+ * Split a long message into chunks that fit within Discord's message limit.
+ * Handles code block continuity — if a split falls inside a code block,
+ * the chunk is closed with ``` and the next chunk reopens with ```language.
+ */
+export function splitMessage(text: string, maxLength: number = MAX_MESSAGE_LENGTH): string[] {
+  if (!text || text.trim().length === 0) return [];
+  if (text.length <= maxLength) return [text];
+
+  const codeBlocks = findCodeBlocks(text);
+  const chunks: string[] = [];
+  let pos = 0;
+
+  while (pos < text.length) {
+    const remaining = text.length - pos;
+    if (remaining <= maxLength) {
+      chunks.push(text.slice(pos));
+      break;
+    }
+
+    // Check if the proposed split region falls inside a code block
+    const splitCandidate = pos + maxLength;
+    const containingBlock = codeBlocks.find(b => b.start < splitCandidate && b.end > pos && b.start >= pos && b.end > splitCandidate);
+
+    if (containingBlock) {
+      // The code block spans beyond our max length from current pos
+      const textBeforeBlock = text.slice(pos, containingBlock.start);
+
+      if (textBeforeBlock.trim().length > 0 && textBeforeBlock.length >= maxLength * 0.2) {
+        // Split before the code block if there's meaningful content before it
+        const splitPoint = containingBlock.start;
+        chunks.push(text.slice(pos, splitPoint).trimEnd());
+        pos = splitPoint;
+        continue;
+      }
+
+      // Code block itself is too long — split inside it with close/reopen
+      const blockContentStart = text.indexOf('\n', containingBlock.start) + 1;
+      const overhead = containingBlock.language.length + 4 + 4; // ```lang\n + \n```
+      const availableForContent = maxLength - (blockContentStart - pos) - 4; // -4 for closing ```
+
+      if (availableForContent > maxLength * 0.3) {
+        // Find split point within the code block content
+        const blockSlice = text.slice(pos, pos + maxLength - 4); // leave room for closing ```
+        const splitPoint = findBestSplitPoint(blockSlice, maxLength - 4);
+        const chunk = text.slice(pos, pos + splitPoint) + '\n```';
+        chunks.push(chunk);
+        pos = pos + splitPoint;
+        // Reopen the code block in the next chunk
+        const reopener = '```' + containingBlock.language + '\n';
+        // Prepend the reopener by adjusting what we'll read next
+        text = text.slice(0, pos) + reopener + text.slice(pos);
+        // Adjust code block positions for the inserted text
+        const insertLen = reopener.length;
+        for (const block of codeBlocks) {
+          if (block.start >= pos) {
+            block.start += insertLen;
+            block.end += insertLen;
+          }
+        }
+        continue;
+      }
+    }
+
+    // Normal split — no code block conflict
+    const splitPoint = findBestSplitPoint(text.slice(pos), maxLength);
+    chunks.push(text.slice(pos, pos + splitPoint).trimEnd());
+    pos += splitPoint;
+
+    // Skip leading whitespace on next chunk (but preserve code block openers)
+    while (pos < text.length && text[pos] === '\n') {
+      pos++;
+    }
+  }
+
+  return chunks.filter(c => c.trim().length > 0);
 }
 
 /**

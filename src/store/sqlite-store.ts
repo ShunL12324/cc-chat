@@ -146,15 +146,42 @@ export class SqliteStore {
   }
 
   /**
-   * Update specific fields of a session.
+   * Update specific fields of a session atomically.
    * Returns false if session not found.
    */
   update(threadId: string, updates: SessionUpdate): boolean {
-    const session = this.get(threadId);
-    if (!session) return false;
+    const setClauses: string[] = [];
+    const params: (string | number | null)[] = [];
 
-    this.set({ ...session, ...updates });
-    return true;
+    if (updates.claudeSessionId !== undefined) {
+      setClauses.push('session_id = ?');
+      params.push(updates.claudeSessionId || null);
+    }
+    if (updates.useContinue !== undefined) {
+      setClauses.push('use_continue = ?');
+      params.push(updates.useContinue ? 1 : 0);
+    }
+    if (updates.model !== undefined) {
+      setClauses.push('model = ?');
+      params.push(updates.model);
+    }
+    if (updates.status !== undefined) {
+      setClauses.push('status = ?');
+      params.push(updates.status);
+    }
+    if (updates.lastActivity !== undefined) {
+      setClauses.push('last_activity = ?');
+      params.push(updates.lastActivity);
+    }
+
+    if (setClauses.length === 0) return false;
+
+    params.push(threadId);
+    const result = this.db.query(
+      `UPDATE thread_bindings SET ${setClauses.join(', ')} WHERE thread_id = ?`
+    ).run(...params);
+
+    return result.changes > 0;
   }
 
   /**

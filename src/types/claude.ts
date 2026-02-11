@@ -1,9 +1,8 @@
 /**
- * Claude CLI Message Types
+ * Claude CLI Message Schemas
  *
- * Type definitions for parsing the stream-json output format from Claude CLI.
- * When running Claude with `--output-format stream-json`, it emits newline-delimited
- * JSON messages that describe the conversation flow.
+ * Zod schemas for parsing the stream-json output format from Claude CLI.
+ * Provides runtime validation to catch format changes early.
  *
  * Message flow:
  * 1. system (init) - Session initialization with available tools
@@ -12,276 +11,175 @@
  * 4. result - Final completion status with cost and duration
  */
 
-/**
- * Union type of all possible Claude CLI message types.
- */
-export type ClaudeMessage =
-  | SystemInitMessage
-  | AssistantMessage
-  | UserMessage
-  | ToolUseMessage
-  | ToolResultMessage
-  | ResultMessage;
+import { z } from 'zod/v4';
+
+export const McpServerSchema = z.object({
+  name: z.string(),
+  status: z.string(),
+});
+
+export const UsageSchema = z.object({
+  input_tokens: z.number(),
+  output_tokens: z.number(),
+  cache_creation_input_tokens: z.number().optional(),
+  cache_read_input_tokens: z.number().optional(),
+  service_tier: z.string().optional(),
+});
+
+export const TextContentSchema = z.object({
+  type: z.literal('text'),
+  text: z.string(),
+});
+
+export const ToolUseContentSchema = z.object({
+  type: z.literal('tool_use'),
+  id: z.string(),
+  name: z.string(),
+  input: z.record(z.string(), z.unknown()),
+});
+
+export const ToolResultContentSchema = z.object({
+  type: z.literal('tool_result'),
+  tool_use_id: z.string(),
+  content: z.string(),
+  is_error: z.boolean().optional(),
+});
+
+export const ContentSchema = z.discriminatedUnion('type', [
+  TextContentSchema,
+  ToolUseContentSchema,
+  ToolResultContentSchema,
+]);
+
+export const ContentBlockSchema = z.object({
+  type: z.literal('message'),
+  id: z.string(),
+  role: z.enum(['assistant', 'user']),
+  model: z.string().optional(),
+  content: z.array(ContentSchema),
+  stop_reason: z.string().nullish(),
+  stop_sequence: z.string().nullish(),
+  usage: UsageSchema.optional(),
+});
+
+export const SystemInitMessageSchema = z.object({
+  type: z.literal('system'),
+  subtype: z.literal('init'),
+  session_id: z.string(),
+  tools: z.array(z.string()),
+  mcp_servers: z.array(McpServerSchema),
+  model: z.string().optional(),
+  cwd: z.string().optional(),
+});
+
+export const ToolUseResultDataSchema = z.object({
+  tool_name: z.string(),
+  tool_use_id: z.string(),
+  is_error: z.boolean().optional(),
+});
+
+export const AssistantMessageSchema = z.object({
+  type: z.literal('assistant'),
+  message: ContentBlockSchema,
+  session_id: z.string(),
+});
+
+export const UserMessageSchema = z.object({
+  type: z.literal('user'),
+  message: ContentBlockSchema,
+  session_id: z.string(),
+  tool_use_result: ToolUseResultDataSchema.optional(),
+});
+
+export const ToolUseMessageSchema = z.object({
+  type: z.literal('tool_use'),
+  tool_name: z.string(),
+  tool_input: z.record(z.string(), z.unknown()),
+  session_id: z.string(),
+});
+
+export const ToolResultMessageSchema = z.object({
+  type: z.literal('tool_result'),
+  tool_name: z.string(),
+  tool_result: z.string(),
+  is_error: z.boolean(),
+  session_id: z.string(),
+});
+
+export const ResultUsageSchema = z.object({
+  input_tokens: z.number(),
+  output_tokens: z.number(),
+  cache_creation_input_tokens: z.number().optional(),
+  cache_read_input_tokens: z.number().optional(),
+  server_tool_use_input_tokens: z.number().optional(),
+});
+
+export const ModelUsageEntrySchema = z.object({
+  input_tokens: z.number(),
+  output_tokens: z.number(),
+  cache_creation_input_tokens: z.number().optional(),
+  cache_read_input_tokens: z.number().optional(),
+  server_tool_use_input_tokens: z.number().optional(),
+});
+
+export const ResultMessageSchema = z.object({
+  type: z.literal('result'),
+  subtype: z.enum(['success', 'error', 'error_max_turns', 'interrupted']),
+  session_id: z.string(),
+  result: z.string().optional(),
+  is_error: z.boolean().optional(),
+  total_cost_usd: z.number().optional(),
+  duration_ms: z.number().optional(),
+  duration_api_ms: z.number().optional(),
+  num_turns: z.number().optional(),
+  usage: ResultUsageSchema.optional(),
+  modelUsage: z.record(z.string(), ModelUsageEntrySchema).optional(),
+});
 
 /**
- * System initialization message sent at the start of a session.
- * Contains the session ID needed for resuming conversations.
+ * Discriminated union of all Claude CLI message types.
+ * Use parseClaudeMessage() for safe parsing with error details.
  */
-export interface SystemInitMessage {
-  /** Message type identifier */
-  type: 'system';
-  /** System message subtype */
-  subtype: 'init';
-  /** Unique session identifier for resuming later */
-  session_id: string;
-  /** List of available tool names */
-  tools: string[];
-  /** Connected MCP servers and their status */
-  mcp_servers: McpServer[];
-  /** Model being used for this session */
-  model?: string;
-  /** Current working directory */
-  cwd?: string;
+export const ClaudeMessageSchema = z.discriminatedUnion('type', [
+  SystemInitMessageSchema,
+  AssistantMessageSchema,
+  UserMessageSchema,
+  ToolUseMessageSchema,
+  ToolResultMessageSchema,
+  ResultMessageSchema,
+]);
+
+/**
+ * Safely parse a JSON object as a Claude CLI message.
+ * Returns { success: true, data } or { success: false, error }.
+ */
+export function parseClaudeMessage(data: unknown) {
+  return ClaudeMessageSchema.safeParse(data);
 }
 
-/**
- * MCP (Model Context Protocol) server connection information.
- */
-export interface McpServer {
-  /** Server identifier name */
-  name: string;
-  /** Connection status (e.g., 'connected', 'disconnected') */
-  status: string;
-}
+export const ToolInfoSchema = z.object({
+  name: z.string(),
+  icon: z.string(),
+  description: z.string(),
+  input: z.record(z.string(), z.unknown()),
+});
 
-/**
- * Assistant message containing Claude's response.
- * May include text content and/or tool usage requests.
- */
-export interface AssistantMessage {
-  /** Message type identifier */
-  type: 'assistant';
-  /** Content block containing the response */
-  message: ContentBlock;
-  /** Session identifier */
-  session_id: string;
-}
-
-/**
- * User message containing tool results or user input.
- */
-export interface UserMessage {
-  /** Message type identifier */
-  type: 'user';
-  /** Content block containing the message */
-  message: ContentBlock;
-  /** Session identifier */
-  session_id: string;
-  /** Structured tool result data (present when message contains tool results) */
-  tool_use_result?: ToolUseResultData;
-}
-
-/**
- * Structured data from a tool use result in a user message.
- * Provides parsed tool execution details beyond the raw content block.
- */
-export interface ToolUseResultData {
-  /** Name of the tool that was executed */
-  tool_name: string;
-  /** Tool use ID this result corresponds to */
-  tool_use_id: string;
-  /** Whether the tool execution resulted in an error */
-  is_error?: boolean;
-}
-
-/**
- * Content block wrapper for message content.
- * Used by both assistant and user messages.
- */
-export interface ContentBlock {
-  /** Block type (always 'message') */
-  type: 'message';
-  /** Unique message identifier */
-  id: string;
-  /** Message role */
-  role: 'assistant' | 'user';
-  /** Model that generated this message (for assistant messages) */
-  model?: string;
-  /** Array of content items (text, tool_use, tool_result) */
-  content: Content[];
-  /** Reason the model stopped generating */
-  stop_reason?: string | null;
-  /** Stop sequence that triggered completion */
-  stop_sequence?: string | null;
-  /** Token usage statistics */
-  usage?: Usage;
-}
-
-/**
- * Union type of all content item types.
- */
-export type Content = TextContent | ToolUseContent | ToolResultContent;
-
-/**
- * Text content from Claude's response.
- */
-export interface TextContent {
-  /** Content type identifier */
-  type: 'text';
-  /** The text content */
-  text: string;
-}
-
-/**
- * Tool use request from Claude.
- * Indicates Claude wants to execute a tool with the given input.
- */
-export interface ToolUseContent {
-  /** Content type identifier */
-  type: 'tool_use';
-  /** Unique tool use identifier for matching with results */
-  id: string;
-  /** Name of the tool to execute */
-  name: string;
-  /** Tool input parameters as key-value pairs */
-  input: Record<string, unknown>;
-}
-
-/**
- * Result from a tool execution.
- * Returned to Claude after a tool_use is processed.
- */
-export interface ToolResultContent {
-  /** Content type identifier */
-  type: 'tool_result';
-  /** ID of the tool_use this result corresponds to */
-  tool_use_id: string;
-  /** Tool execution output */
-  content: string;
-  /** Whether the tool execution resulted in an error */
-  is_error?: boolean;
-}
-
-/**
- * Token usage statistics for billing and monitoring.
- */
-export interface Usage {
-  /** Number of input tokens consumed */
-  input_tokens: number;
-  /** Number of output tokens generated */
-  output_tokens: number;
-  /** Tokens used to create new cache entries */
-  cache_creation_input_tokens?: number;
-  /** Tokens read from cache */
-  cache_read_input_tokens?: number;
-  /** Service tier used for this request */
-  service_tier?: string;
-}
-
-/**
- * Tool use notification message (alternative format).
- * Emitted when Claude invokes a tool.
- */
-export interface ToolUseMessage {
-  /** Message type identifier */
-  type: 'tool_use';
-  /** Name of the tool being used */
-  tool_name: string;
-  /** Input parameters passed to the tool */
-  tool_input: Record<string, unknown>;
-  /** Session identifier */
-  session_id: string;
-}
-
-/**
- * Tool result notification message (alternative format).
- * Emitted after a tool completes execution.
- */
-export interface ToolResultMessage {
-  /** Message type identifier */
-  type: 'tool_result';
-  /** Name of the tool that was executed */
-  tool_name: string;
-  /** Result returned by the tool */
-  tool_result: string;
-  /** Whether the tool execution failed */
-  is_error: boolean;
-  /** Session identifier */
-  session_id: string;
-}
-
-/**
- * Final result message indicating task completion.
- * Contains cost, duration, and status information.
- */
-export interface ResultMessage {
-  /** Message type identifier */
-  type: 'result';
-  /** Completion status subtype */
-  subtype: 'success' | 'error' | 'error_max_turns' | 'interrupted';
-  /** Session identifier */
-  session_id: string;
-  /** Text result or error message */
-  result?: string;
-  /** Whether the result is an error */
-  is_error?: boolean;
-  /** Cumulative session cost in USD (primary cost field from CLI) */
-  total_cost_usd?: number;
-  /** Total duration in milliseconds */
-  duration_ms?: number;
-  /** Time spent on API calls in milliseconds */
-  duration_api_ms?: number;
-  /** Number of conversation turns */
-  num_turns?: number;
-  /** Aggregated token usage for this run */
-  usage?: ResultUsage;
-  /** Per-model token usage breakdown */
-  modelUsage?: Record<string, ModelUsageEntry>;
-}
-
-/**
- * Aggregated token usage statistics from a result message.
- */
-export interface ResultUsage {
-  /** Total input tokens consumed */
-  input_tokens: number;
-  /** Total output tokens generated */
-  output_tokens: number;
-  /** Tokens used to create new cache entries */
-  cache_creation_input_tokens?: number;
-  /** Tokens read from cache */
-  cache_read_input_tokens?: number;
-  /** Server-side tokens (tool execution, etc.) */
-  server_tool_use_input_tokens?: number;
-}
-
-/**
- * Per-model token usage entry in modelUsage breakdown.
- */
-export interface ModelUsageEntry {
-  /** Input tokens for this model */
-  input_tokens: number;
-  /** Output tokens for this model */
-  output_tokens: number;
-  /** Cache creation tokens for this model */
-  cache_creation_input_tokens?: number;
-  /** Cache read tokens for this model */
-  cache_read_input_tokens?: number;
-  /** Server-side tokens for this model */
-  server_tool_use_input_tokens?: number;
-}
-
-/**
- * Parsed tool information for display purposes.
- * Used by the output formatter for Discord display.
- */
-export interface ToolInfo {
-  /** Tool name */
-  name: string;
-  /** Display icon (emoji) */
-  icon: string;
-  /** Human-readable description */
-  description: string;
-  /** Tool input parameters */
-  input: Record<string, unknown>;
-}
+// Inferred types
+export type McpServer = z.infer<typeof McpServerSchema>;
+export type Usage = z.infer<typeof UsageSchema>;
+export type TextContent = z.infer<typeof TextContentSchema>;
+export type ToolUseContent = z.infer<typeof ToolUseContentSchema>;
+export type ToolResultContent = z.infer<typeof ToolResultContentSchema>;
+export type Content = z.infer<typeof ContentSchema>;
+export type ContentBlock = z.infer<typeof ContentBlockSchema>;
+export type SystemInitMessage = z.infer<typeof SystemInitMessageSchema>;
+export type ToolUseResultData = z.infer<typeof ToolUseResultDataSchema>;
+export type AssistantMessage = z.infer<typeof AssistantMessageSchema>;
+export type UserMessage = z.infer<typeof UserMessageSchema>;
+export type ToolUseMessage = z.infer<typeof ToolUseMessageSchema>;
+export type ToolResultMessage = z.infer<typeof ToolResultMessageSchema>;
+export type ResultUsage = z.infer<typeof ResultUsageSchema>;
+export type ModelUsageEntry = z.infer<typeof ModelUsageEntrySchema>;
+export type ResultMessage = z.infer<typeof ResultMessageSchema>;
+export type ClaudeMessage = z.infer<typeof ClaudeMessageSchema>;
+export type ToolInfo = z.infer<typeof ToolInfoSchema>;

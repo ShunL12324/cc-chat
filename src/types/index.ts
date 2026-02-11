@@ -1,11 +1,11 @@
 /**
  * Type Definitions Index
  *
- * Re-exports all type definitions for convenient importing.
- * Import from this module to access all types:
+ * Re-exports all type definitions and schemas for convenient importing.
  *
  * @example
  * import type { Session, ClaudeMessage, ToolUseContent } from './types/index.js';
+ * import { ClaudeMessageSchema, parseClaudeMessage } from './types/index.js';
  */
 
 export * from './claude.js';
