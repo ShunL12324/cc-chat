@@ -43,6 +43,7 @@ import type { Session, ModelType, ToolUseContent, AssistantMessage, ResultMessag
 import { readdirSync, statSync, existsSync } from 'fs';
 import { basename, join, dirname } from 'path';
 import { homedir } from 'os';
+import { Cron } from 'croner';
 import { getLogger } from '../core/logger.js';
 
 /**
@@ -113,6 +114,9 @@ function isRootPath(path: string): boolean {
 export class DiscordBot {
   private client: Client;
 
+  /** Map of thread ID to scheduled Cron job */
+  private schedules = new Map<string, { cron: import('croner').Cron; message: string; seconds: number }>();
+
   constructor() {
     this.client = new Client({
       intents: [
@@ -161,6 +165,11 @@ export class DiscordBot {
    * Stop the bot gracefully, killing any running Claude processes.
    */
   async stop(): Promise<void> {
+    // Stop all scheduled tasks
+    for (const [, schedule] of this.schedules) {
+      schedule.cron.stop();
+    }
+    this.schedules.clear();
     await processManager.stopAll();
     this.client.destroy();
   }
@@ -215,6 +224,9 @@ export class DiscordBot {
         break;
       case 'check-update':
         await this.handleCheckUpdateCommand(interaction);
+        break;
+      case 'schedule':
+        await this.handleScheduleCommand(interaction);
         break;
     }
   }
@@ -519,6 +531,92 @@ export class DiscordBot {
     await checkForUpdates();
     const status = getUpdateStatus();
     await interaction.editReply({ content: formatUpdateStatus(status) });
+  }
+
+  /**
+   * Handle /schedule set|clear command.
+   * Sets up a Cron job that sends a message to Claude at the specified interval.
+   */
+  private async handleScheduleCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+    const channel = interaction.channel;
+    if (!channel?.isThread()) {
+      await interaction.reply({ content: 'Use this command inside a project thread.', flags: MessageFlags.Ephemeral });
+      return;
+    }
+
+    const session = store.get(channel.id);
+    if (!session) {
+      await interaction.reply({ content: 'No project bound to this thread.', flags: MessageFlags.Ephemeral });
+      return;
+    }
+
+    const subcommand = interaction.options.getSubcommand();
+
+    if (subcommand === 'clear') {
+      const existing = this.schedules.get(session.id);
+      if (existing) {
+        existing.cron.stop();
+        this.schedules.delete(session.id);
+        await interaction.reply({ content: '⏹️ Scheduled task cleared.' });
+      } else {
+        await interaction.reply({ content: 'No scheduled task to clear.', flags: MessageFlags.Ephemeral });
+      }
+      return;
+    }
+
+    // subcommand === 'set'
+    const seconds = interaction.options.getInteger('seconds', true);
+    const message = interaction.options.getString('message', true);
+
+    // Stop existing schedule if any
+    const existing = this.schedules.get(session.id);
+    if (existing) {
+      existing.cron.stop();
+    }
+
+    // Convert seconds to cron expression
+    // For intervals that divide evenly into minutes, use cron; otherwise use Cron interval
+    const cronExpr = `*/${seconds} * * * * *`; // croner supports seconds field
+
+    const cron = new Cron(cronExpr, async () => {
+      try {
+        const currentSession = store.get(session.id);
+        if (!currentSession) {
+          // Thread deleted, clean up
+          cron.stop();
+          this.schedules.delete(session.id);
+          return;
+        }
+
+        // Skip if already running
+        if (processManager.isRunning(session.id)) {
+          getLogger().info(`[schedule] Skipping ${session.id}, task already running`);
+          return;
+        }
+
+        getLogger().info(`[schedule] Sending to ${session.name}: ${message}`);
+        await channel.send(`⏰ **Scheduled:** ${message}`);
+
+        await processManager.acquireLock(session.id);
+        try {
+          await this.executeClaudeTask(currentSession, message, channel);
+        } finally {
+          processManager.releaseLock(session.id);
+        }
+      } catch (error) {
+        getLogger().error(error, '[schedule] Error executing scheduled task');
+      }
+    });
+
+    this.schedules.set(session.id, { cron, message, seconds });
+
+    const humanInterval = seconds >= 3600
+      ? `${(seconds / 3600).toFixed(1)}h`
+      : seconds >= 60
+        ? `${Math.floor(seconds / 60)}m${seconds % 60 ? ` ${seconds % 60}s` : ''}`
+        : `${seconds}s`;
+
+    await interaction.reply({ content: `⏰ Scheduled: every **${humanInterval}** → "${message}"` });
   }
 
   /**

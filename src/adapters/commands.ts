@@ -129,4 +129,33 @@ export const commands: RESTPostAPIChatInputApplicationCommandsJSONBody[] = [
     .setName('check-update')
     .setDescription('Check for updates')
     .toJSON(),
+
+  // Schedule periodic messages to Claude
+  new SlashCommandBuilder()
+    .setName('schedule')
+    .setDescription('Schedule periodic messages to Claude')
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('set')
+        .setDescription('Set a periodic task (interval in seconds)')
+        .addIntegerOption(option =>
+          option
+            .setName('seconds')
+            .setDescription('Interval in seconds (min 60)')
+            .setRequired(true)
+            .setMinValue(60)
+        )
+        .addStringOption(option =>
+          option
+            .setName('message')
+            .setDescription('Message to send to Claude')
+            .setRequired(true)
+        )
+    )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('clear')
+        .setDescription('Clear the scheduled task')
+    )
+    .toJSON(),
 ];

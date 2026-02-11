@@ -528,6 +528,8 @@ export function formatHelp(): string {
 \`/session clear\` - Clear session
 \`/model <model>\` - Switch model
 \`/stop\` - Stop task
+\`/schedule set <seconds> <message>\` - Periodic task
+\`/schedule clear\` - Clear scheduled task
 
 📊 **Status**
 \`/status\` - All projects
