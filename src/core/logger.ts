@@ -1,21 +1,22 @@
 /**
  * Logger
  *
- * Structured logging with pino + pino-roll for automatic file rotation.
+ * Structured logging with pino. Writes to file with manual rotation.
+ * Compatible with Bun single-file compilation (no dynamic transports).
  *
  * Features:
- * - JSON structured logs to file via pino-roll
- * - Automatic rotation by size (10MB) with retention (7 files)
- * - Pretty console output in development
+ * - JSON structured logs to file via pino.destination
+ * - Manual rotation by size (10MB) with retention (7 files)
+ * - Console output preserved alongside file logging
  * - Overrides console.log/error for unified logging
  */
 
 import pino from 'pino';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, statSync, renameSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 
-/** Maximum size of a log file before rotation */
-const MAX_LOG_SIZE = 1024 * 1024 * 10; // 10MB
+/** Maximum size of a log file before rotation (10MB) */
+const MAX_LOG_SIZE = 1024 * 1024 * 10;
 
 /** Maximum number of rotated log files to keep */
 const MAX_LOG_FILES = 7;
@@ -23,64 +24,94 @@ const MAX_LOG_FILES = 7;
 /** Global logger instance */
 let logger: pino.Logger;
 
+/** Log file path */
+let logFilePath: string;
+
+/**
+ * Rotate log file if it exceeds MAX_LOG_SIZE.
+ * Renames current log to .1, shifts existing .N to .N+1, removes oldest.
+ */
+function rotateIfNeeded(): void {
+  if (!logFilePath || !existsSync(logFilePath)) return;
+
+  try {
+    const stat = statSync(logFilePath);
+    if (stat.size < MAX_LOG_SIZE) return;
+
+    const logDir = dirname(logFilePath);
+    const baseName = logFilePath.split(/[/\\]/).pop()!;
+
+    // Remove oldest
+    const oldest = join(logDir, `${baseName}.${MAX_LOG_FILES}`);
+    if (existsSync(oldest)) {
+      unlinkSync(oldest);
+    }
+
+    // Shift existing rotated files
+    for (let i = MAX_LOG_FILES - 1; i >= 1; i--) {
+      const from = join(logDir, `${baseName}.${i}`);
+      const to = join(logDir, `${baseName}.${i + 1}`);
+      if (existsSync(from)) {
+        renameSync(from, to);
+      }
+    }
+
+    // Rotate current
+    renameSync(logFilePath, join(logDir, `${baseName}.1`));
+  } catch {
+    // Ignore rotation errors
+  }
+}
+
 /**
  * Initialize the logger.
  *
- * Sets up pino with pino-roll file transport (rotation + retention)
- * and overrides console.log/error to route through pino.
+ * Uses pino.destination for direct file writing (no worker_threads transport).
+ * This is compatible with Bun single-file compilation.
  */
 export function initLogger(): void {
   const appDir = dirname(process.execPath);
   const logDir = join(appDir, 'logs');
-  const logFile = join(logDir, 'cc-chat.log');
+  logFilePath = join(logDir, 'cc-chat.log');
 
   // Create logs directory if it doesn't exist
   if (!existsSync(logDir)) {
     mkdirSync(logDir, { recursive: true });
   }
 
+  // Rotate before opening
+  rotateIfNeeded();
+
+  const dest = pino.destination({
+    dest: logFilePath,
+    sync: false,
+    mkdir: true,
+  });
+
   logger = pino({
     level: 'info',
     timestamp: pino.stdTimeFunctions.isoTime,
-  }, pino.transport({
-    targets: [
-      // File transport with rotation
-      {
-        target: 'pino-roll',
-        options: {
-          file: logFile,
-          frequency: 'daily',
-          limit: { count: MAX_LOG_FILES },
-          size: MAX_LOG_SIZE,
-          mkdir: true,
-        },
-        level: 'info',
-      },
-      // Pretty console output
-      {
-        target: 'pino-pretty',
-        options: {
-          colorize: true,
-          translateTime: 'SYS:HH:MM:ss',
-          ignore: 'pid,hostname',
-        },
-        level: 'info',
-      },
-    ],
-  }));
+  }, dest);
 
-  // Override console methods to route through pino
+  // Set up periodic rotation check (every 5 minutes)
+  setInterval(() => {
+    rotateIfNeeded();
+  }, 5 * 60 * 1000);
+
+  // Override console methods to route through pino + keep console output
   const originalLog = console.log;
   const originalError = console.error;
 
   console.log = (...args: unknown[]) => {
     const message = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
     logger.info(message);
+    originalLog.apply(console, args);
   };
 
   console.error = (...args: unknown[]) => {
     const message = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
     logger.error(message);
+    originalError.apply(console, args);
   };
 }
 
