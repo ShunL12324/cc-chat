@@ -357,6 +357,35 @@ export function splitMessage(text: string, maxLength: number = MAX_MESSAGE_LENGT
 }
 
 /**
+ * Extract total tokens from a result message.
+ * Prefers modelUsage (camelCase, per-model breakdown) over usage (may include system prompt tokens).
+ */
+function getResultTokens(msg: ResultMessage): { input: number; output: number } {
+  // Try modelUsage first (accurate per-model data)
+  if (msg.modelUsage) {
+    let input = 0;
+    let output = 0;
+    for (const entry of Object.values(msg.modelUsage)) {
+      input += entry.inputTokens ?? 0;
+      output += entry.outputTokens ?? 0;
+    }
+    if (input > 0 || output > 0) {
+      return { input, output };
+    }
+  }
+
+  // Fallback to usage
+  if (msg.usage) {
+    return {
+      input: msg.usage.input_tokens ?? 0,
+      output: msg.usage.output_tokens ?? 0,
+    };
+  }
+
+  return { input: 0, output: 0 };
+}
+
+/**
  * Format a result message as a short status line.
  */
 export function formatResult(msg: ResultMessage): string {
@@ -371,12 +400,12 @@ export function formatResult(msg: ResultMessage): string {
   if (msg.total_cost_usd !== undefined) {
     stats.push(`$${msg.total_cost_usd.toFixed(4)}`);
   }
-  if (msg.usage) {
-    const totalTokens = (msg.usage.input_tokens || 0) + (msg.usage.output_tokens || 0);
-    if (totalTokens > 0) {
-      const formatted = totalTokens >= 1000 ? `${(totalTokens / 1000).toFixed(1)}k` : String(totalTokens);
-      stats.push(`${formatted} tokens`);
-    }
+
+  const tokens = getResultTokens(msg);
+  const totalTokens = tokens.input + tokens.output;
+  if (totalTokens > 0) {
+    const formatted = totalTokens >= 1000 ? `${(totalTokens / 1000).toFixed(1)}k` : String(totalTokens);
+    stats.push(`${formatted} tokens`);
   }
 
   return stats.length > 0 ? `${icon} ${stats.join(' · ')}` : icon;
@@ -419,6 +448,13 @@ export function formatResultEmbed(msg: ResultMessage): EmbedBuilder {
 
   if (msg.num_turns !== undefined) {
     fields.push({ name: '🔄 Turns', value: String(msg.num_turns), inline: true });
+  }
+
+  const tokens = getResultTokens(msg);
+  const totalTokens = tokens.input + tokens.output;
+  if (totalTokens > 0) {
+    const formatted = totalTokens >= 1000 ? `${(totalTokens / 1000).toFixed(1)}k` : String(totalTokens);
+    fields.push({ name: '📊 Tokens', value: `${formatted} (in: ${tokens.input >= 1000 ? `${(tokens.input / 1000).toFixed(1)}k` : tokens.input} / out: ${tokens.output >= 1000 ? `${(tokens.output / 1000).toFixed(1)}k` : tokens.output})`, inline: true });
   }
 
   if (fields.length > 0) {
