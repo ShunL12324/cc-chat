@@ -17,7 +17,7 @@
 import { loadConfig, validateConfig } from './config.js';
 import { DiscordBot } from './adapters/discord-bot.js';
 import { store } from './store/sqlite-store.js';
-import { applyPendingUpdate, checkForUpdates, startPeriodicUpdateCheck, stopPeriodicUpdateCheck } from './core/auto-updater.js';
+import { applyPendingUpdate, checkForUpdates, startPeriodicUpdateCheck, stopPeriodicUpdateCheck, rollbackIfCrashed, markStarting, markHealthy } from './core/auto-updater.js';
 import { initLogger, flushLogger, getLogger } from './core/logger.js';
 
 /**
@@ -32,8 +32,14 @@ async function main() {
 
   const log = getLogger();
 
-  // Apply pending update if exists (before anything else)
+  // Rollback if previous version crashed after update
+  rollbackIfCrashed();
+
+  // Apply pending update if exists
   applyPendingUpdate();
+
+  // Mark as starting (for crash detection on next launch)
+  markStarting();
 
   log.info('cc-chat starting...');
 
@@ -74,6 +80,7 @@ async function main() {
   // Start bot
   try {
     await bot.start();
+    markHealthy();
     log.info('Bot is running!');
   } catch (error) {
     log.error(error, 'Failed to start bot');

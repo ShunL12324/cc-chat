@@ -106,7 +106,78 @@ function isNewer(latest: string, current: string): boolean {
   return latest !== current;
 }
 
+function getStartingMarker(): string {
+  return join(getAppDir(), '.starting');
+}
+
 // --- Core functions ---
+
+/**
+ * Check if the previous launch crashed after an update, and rollback if so.
+ * Call this at the very start of the application, before applyPendingUpdate.
+ *
+ * Detection: if .starting marker exists AND .bak exists, the previous
+ * version crashed before marking itself healthy. Rollback to .bak.
+ */
+export function rollbackIfCrashed(): void {
+  const marker = getStartingMarker();
+  const backupPath = getBackupPath();
+  const exePath = getExePath();
+  const versionFile = getVersionFile();
+
+  if (!existsSync(marker) || !existsSync(backupPath)) {
+    return;
+  }
+
+  getLogger().error('[update] Previous version crashed after update, rolling back...');
+
+  try {
+    // Replace current (broken) exe with backup
+    unlinkSync(exePath);
+    renameSync(backupPath, exePath);
+
+    // Revert version file to 'rollback' so next update check will re-download
+    writeFileSync(versionFile, 'rollback', 'utf-8');
+    currentVersion = 'rollback';
+
+    // Clean up
+    unlinkSync(marker);
+
+    // Remove any pending update files
+    const newPath = getNewPath();
+    if (existsSync(newPath)) unlinkSync(newPath);
+    const pendingVersionFile = getPendingVersionFile();
+    if (existsSync(pendingVersionFile)) unlinkSync(pendingVersionFile);
+
+    getLogger().info('[update] Rolled back to previous version');
+  } catch (error) {
+    getLogger().error(`[update] Rollback failed: ${error}`);
+  }
+}
+
+/**
+ * Mark the application as starting. Call before main logic.
+ * If the app crashes before markHealthy(), next launch will rollback.
+ */
+export function markStarting(): void {
+  writeFileSync(getStartingMarker(), String(Date.now()), 'utf-8');
+}
+
+/**
+ * Mark the application as healthy (started successfully).
+ * Removes the .starting marker and the .bak file (no longer needed for rollback).
+ */
+export function markHealthy(): void {
+  const marker = getStartingMarker();
+  if (existsSync(marker)) {
+    unlinkSync(marker);
+  }
+  // Safe to remove backup now
+  const backupPath = getBackupPath();
+  if (existsSync(backupPath)) {
+    try { unlinkSync(backupPath); } catch { /* ignore */ }
+  }
+}
 
 /**
  * Apply pending update if .new file exists.
