@@ -53,8 +53,8 @@ export const ContentSchema = z.discriminatedUnion('type', [
 ]);
 
 export const ContentBlockSchema = z.object({
-  type: z.literal('message'),
-  id: z.string(),
+  type: z.string().optional(),
+  id: z.string().optional(),
   role: z.enum(['assistant', 'user']),
   model: z.string().optional(),
   content: z.array(ContentSchema),
@@ -63,19 +63,31 @@ export const ContentBlockSchema = z.object({
   usage: UsageSchema.optional(),
 }).passthrough();
 
-export const SystemInitMessageSchema = z.object({
+/**
+ * System message — accepts any subtype. Parser filters for 'init'.
+ * Non-init subtypes (e.g. progress) are silently ignored.
+ */
+export const SystemMessageSchema = z.object({
   type: z.literal('system'),
-  subtype: z.literal('init'),
-  session_id: z.string(),
-  tools: z.array(z.string()),
-  mcp_servers: z.array(McpServerSchema),
+  subtype: z.string(),
+  session_id: z.string().optional(),
+  tools: z.array(z.string()).optional(),
+  mcp_servers: z.array(McpServerSchema).optional(),
   model: z.string().optional(),
   cwd: z.string().optional(),
 }).passthrough();
 
+/** Narrowed type for init messages only */
+export const SystemInitMessageSchema = SystemMessageSchema.extend({
+  subtype: z.literal('init'),
+  session_id: z.string(),
+  tools: z.array(z.string()),
+  mcp_servers: z.array(McpServerSchema),
+});
+
 export const ToolUseResultDataSchema = z.object({
-  tool_name: z.string(),
-  tool_use_id: z.string(),
+  tool_name: z.string().optional(),
+  tool_use_id: z.string().optional(),
   is_error: z.boolean().optional(),
 }).passthrough();
 
@@ -148,7 +160,7 @@ export const ResultMessageSchema = z.object({
  * Use parseClaudeMessage() for safe parsing with error details.
  */
 export const ClaudeMessageSchema = z.discriminatedUnion('type', [
-  SystemInitMessageSchema,
+  SystemMessageSchema,
   AssistantMessageSchema,
   UserMessageSchema,
   ToolUseMessageSchema,
@@ -179,6 +191,7 @@ export type ToolUseContent = z.infer<typeof ToolUseContentSchema>;
 export type ToolResultContent = z.infer<typeof ToolResultContentSchema>;
 export type Content = z.infer<typeof ContentSchema>;
 export type ContentBlock = z.infer<typeof ContentBlockSchema>;
+export type SystemMessage = z.infer<typeof SystemMessageSchema>;
 export type SystemInitMessage = z.infer<typeof SystemInitMessageSchema>;
 export type ToolUseResultData = z.infer<typeof ToolUseResultDataSchema>;
 export type AssistantMessage = z.infer<typeof AssistantMessageSchema>;

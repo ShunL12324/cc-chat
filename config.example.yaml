@@ -54,3 +54,10 @@ access:
   # allowedUsers:
   #   - "123456789012345678"
   #   - "987654321098765432"
+
+# Logging Settings
+logging:
+  # Enable debug logging for troubleshooting
+  # Logs detailed info about message parsing, Claude process, etc.
+  # Default: false
+  debug: false

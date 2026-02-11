@@ -32,12 +32,17 @@ export const AccessConfigSchema = z.object({
   allowedUsers: z.array(z.string()),
 });
 
+export const LoggingConfigSchema = z.object({
+  debug: z.boolean(),
+});
+
 export const AppConfigSchema = z.object({
   discord: DiscordConfigSchema,
   claude: ClaudeConfigSchema,
   projects: ProjectsConfigSchema,
   storage: StorageConfigSchema,
   access: AccessConfigSchema,
+  logging: LoggingConfigSchema,
 });
 
 /** Raw configuration as loaded from YAML (before defaults applied). */
@@ -47,6 +52,7 @@ export const RawConfigSchema = z.object({
   projects: ProjectsConfigSchema.partial().optional(),
   storage: StorageConfigSchema.partial().optional(),
   access: AccessConfigSchema.partial().optional(),
+  logging: LoggingConfigSchema.partial().optional(),
 }).optional();
 
 export type DiscordConfig = z.infer<typeof DiscordConfigSchema>;
@@ -54,5 +60,6 @@ export type ClaudeConfig = z.infer<typeof ClaudeConfigSchema>;
 export type ProjectsConfig = z.infer<typeof ProjectsConfigSchema>;
 export type StorageConfig = z.infer<typeof StorageConfigSchema>;
 export type AccessConfig = z.infer<typeof AccessConfigSchema>;
+export type LoggingConfig = z.infer<typeof LoggingConfigSchema>;
 export type AppConfig = z.infer<typeof AppConfigSchema>;
 export type RawConfig = z.infer<typeof RawConfigSchema>;

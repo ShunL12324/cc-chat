@@ -11,11 +11,12 @@
  * - Configurable timeout with automatic process termination
  */
 
-import { execaCommand, type ResultPromise } from 'execa';
+import { execa, type ResultPromise } from 'execa';
 import { MessageParser, type MessageParserHandlers } from './message-parser.js';
 import { processManager } from './process-manager.js';
 import type { ResultMessage, SystemInitMessage } from '../types/index.js';
 import { config } from '../config.js';
+import { getLogger } from './logger.js';
 
 /**
  * Options for running a Claude CLI command.
@@ -75,7 +76,7 @@ export async function runClaude(
 
   // Build CLI arguments
   const args: string[] = [
-    '-p', JSON.stringify(prompt),
+    '-p', prompt,
     '--output-format', 'stream-json',
     '--verbose',
     '--dangerously-skip-permissions',
@@ -115,8 +116,10 @@ export async function runClaude(
   const parser = new MessageParser(wrappedHandlers);
 
   try {
-    const cmd = `${config.claude.path} ${args.join(' ')}`;
-    const proc = execaCommand(cmd, {
+    const log = getLogger();
+    log.debug({ args, cwd, timeout }, '[runner] Spawning Claude process');
+
+    const proc = execa(config.claude.path, args, {
       cwd,
       timeout,
       reject: false,
@@ -135,6 +138,7 @@ export async function runClaude(
     if (proc.stdout) {
       for await (const chunk of proc.stdout) {
         const text = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
+        log.debug({ chunkLen: text.length }, '[runner] stdout chunk');
         await parser.feed(text);
       }
     }
@@ -144,6 +148,8 @@ export async function runClaude(
 
     // Wait for process to complete
     const execResult = await proc;
+
+    log.debug({ exitCode: execResult.exitCode, hasResult: !!result, sessionId }, '[runner] Process completed');
 
     processManager.remove(id);
 

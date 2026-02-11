@@ -43,6 +43,9 @@ const defaults: AppConfig = {
   access: {
     allowedUsers: [],
   },
+  logging: {
+    debug: false,
+  },
 };
 
 let loadedConfig: AppConfig | null = null;
@@ -104,6 +107,9 @@ export function loadConfig(): void {
     access: {
       allowedUsers: raw?.access?.allowedUsers ?? defaults.access.allowedUsers,
     },
+    logging: {
+      debug: raw?.logging?.debug ?? defaults.logging.debug,
+    },
   };
 
   // Environment variable overrides
@@ -143,6 +149,10 @@ export const config = {
   get allowedUsers() {
     if (!loadedConfig) throw new Error('Config not loaded. Call loadConfig() first.');
     return loadedConfig.access.allowedUsers;
+  },
+  get debug() {
+    if (!loadedConfig) return false;
+    return loadedConfig.logging.debug;
   },
 };
 

@@ -18,11 +18,12 @@ import type {
   ClaudeMessage,
   AssistantMessage,
   SystemInitMessage,
+  SystemMessage,
   UserMessage,
   ToolUseContent,
   ResultMessage,
 } from '../types/index.js';
-import { parseClaudeMessage } from '../types/index.js';
+import { parseClaudeMessage, SystemInitMessageSchema } from '../types/index.js';
 import { getLogger } from './logger.js';
 
 /**
@@ -130,10 +131,17 @@ export class MessageParser extends EventEmitter<MessageParserEvents> {
   private async processLine(line: string): Promise<void> {
     try {
       const json = JSON.parse(line);
+      const log = getLogger();
+      log.debug({ type: json?.type, subtype: json?.subtype, msgType: json?.message?.type }, '[parser] Processing line');
+
       const result = parseClaudeMessage(json);
 
       if (!result.success) {
-        getLogger().warn({ issues: result.error.issues }, '[parser] Invalid message shape');
+        log.warn(
+          { issues: result.error.issues, rawType: json?.type, rawSubtype: json?.subtype, rawMsgType: json?.message?.type },
+          '[parser] Invalid message shape'
+        );
+        log.debug({ rawJson: JSON.stringify(json).slice(0, 500) }, '[parser] Raw rejected message');
         return;
       }
 
@@ -152,11 +160,14 @@ export class MessageParser extends EventEmitter<MessageParserEvents> {
    */
   private async dispatch(msg: ClaudeMessage): Promise<void> {
     switch (msg.type) {
-      case 'system':
-        if (msg.subtype === 'init') {
-          this.emit('system_init', msg);
+      case 'system': {
+        // Only emit for init subtype; other subtypes are informational
+        const initResult = SystemInitMessageSchema.safeParse(msg);
+        if (initResult.success) {
+          this.emit('system_init', initResult.data);
         }
         break;
+      }
 
       case 'assistant': {
         const contents = msg.message.content;

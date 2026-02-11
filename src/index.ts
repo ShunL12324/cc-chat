@@ -14,7 +14,7 @@
  * 8. Set up graceful shutdown handlers
  */
 
-import { loadConfig, validateConfig } from './config.js';
+import { loadConfig, validateConfig, config } from './config.js';
 import { DiscordBot } from './adapters/discord-bot.js';
 import { store } from './store/sqlite-store.js';
 import { applyPendingUpdate, checkForUpdates, startPeriodicUpdateCheck, stopPeriodicUpdateCheck, rollbackIfCrashed, markStarting, markHealthy } from './core/auto-updater.js';
@@ -28,7 +28,7 @@ async function main() {
   loadConfig();
 
   // Initialize logger (writes to app directory)
-  initLogger();
+  initLogger(config.debug);
 
   const log = getLogger();
 

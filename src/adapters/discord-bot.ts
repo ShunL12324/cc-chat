@@ -748,6 +748,9 @@ export class DiscordBot {
       return;
     }
 
+    const log = getLogger();
+    log.debug({ threadId: channel.id, sessionName: session.name, prompt: message.content.slice(0, 100) }, '[bot] Message received');
+
     // Acquire lock to prevent race conditions
     // This ensures check-then-act is atomic
     await processManager.acquireLock(session.id);
@@ -756,6 +759,7 @@ export class DiscordBot {
       // Queue message if Claude is already running
       if (processManager.isRunning(session.id)) {
         const queueLength = processManager.getQueueLength(session.id);
+        log.debug({ threadId: session.id, queueLength }, '[bot] Task running, queuing message');
         await message.reply(`Queued (#${queueLength + 1}). Use \`/stop\` to cancel.`);
         await processManager.enqueue(session.id, message.content);
         return;
@@ -788,6 +792,17 @@ export class DiscordBot {
     prompt: string,
     channel: AnyThreadChannel
   ): Promise<void> {
+    const log = getLogger();
+    log.debug({
+      sessionId: session.id,
+      sessionName: session.name,
+      cwd: session.projectDir,
+      model: session.model,
+      claudeSessionId: session.claudeSessionId?.slice(0, 8),
+      useContinue: session.useContinue,
+      promptLength: prompt.length,
+    }, '[bot] Executing Claude task');
+
     store.update(session.id, { status: 'running', lastActivity: Date.now() });
 
     let statusMessage: Awaited<ReturnType<typeof channel.send>> | null = await channel.send('Thinking...');
@@ -851,6 +866,7 @@ export class DiscordBot {
         },
         {
           onSystemInit: async (msg) => {
+            log.debug({ claudeSessionId: msg.session_id, model: msg.model }, '[bot] Claude session init');
             // Switch from --continue to --resume after first message
             store.update(session.id, {
               claudeSessionId: msg.session_id,
@@ -858,11 +874,14 @@ export class DiscordBot {
             });
           },
           onToolUse: async (toolUse: ToolUseContent) => {
+            log.debug({ tool: toolUse.name, id: toolUse.id }, '[bot] Tool use');
             toolHistory.push(toolUse);
             const recentTools = toolHistory.slice(-maxToolHistory);
             await updateStatus(formatToolHistory(recentTools));
           },
           onAssistant: async (msg: AssistantMessage) => {
+            const textLen = msg.message.content.filter(c => c.type === 'text').map(c => (c as any).text?.length ?? 0).reduce((a, b) => a + b, 0);
+            log.debug({ contentBlocks: msg.message.content.length, textLen }, '[bot] Assistant message');
             const chunks = formatAssistantMessage(msg);
             for (const chunk of chunks) {
               if (chunk.trim()) {
@@ -872,6 +891,7 @@ export class DiscordBot {
             }
           },
           onResult: async (msg: ResultMessage) => {
+            log.debug({ subtype: msg.subtype, cost: msg.total_cost_usd, duration: msg.duration_ms, turns: msg.num_turns }, '[bot] Result');
             if (statusMessage) {
               try {
                 await statusMessage.edit(formatResult(msg));

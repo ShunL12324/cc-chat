@@ -68,8 +68,10 @@ function rotateIfNeeded(): void {
  *
  * Uses pino.destination for direct file writing (no worker_threads transport).
  * This is compatible with Bun single-file compilation.
+ *
+ * @param debug - If true, set log level to 'debug' instead of 'info'
  */
-export function initLogger(): void {
+export function initLogger(debug = false): void {
   const appDir = dirname(process.execPath);
   const logDir = join(appDir, 'logs');
   logFilePath = join(logDir, 'cc-chat.log');
@@ -89,7 +91,7 @@ export function initLogger(): void {
   });
 
   logger = pino({
-    level: 'info',
+    level: debug ? 'debug' : 'info',
     timestamp: pino.stdTimeFunctions.isoTime,
   }, dest);
 
