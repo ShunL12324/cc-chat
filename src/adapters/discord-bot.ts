@@ -40,7 +40,7 @@ import {
   formatUpdateStatus,
 } from './output-formatter.js';
 import type { Session, ModelType, ToolUseContent, AssistantMessage, ResultMessage } from '../types/index.js';
-import { readdirSync, statSync, existsSync } from 'fs';
+import { readdirSync, statSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { basename, join, dirname } from 'path';
 import { homedir } from 'os';
 import { Cron } from 'croner';
@@ -728,6 +728,46 @@ export class DiscordBot {
   }
 
   /**
+   * Build prompt from message content and attachments.
+   * Downloads attachments to project directory and appends paths to prompt.
+   */
+  private async buildPrompt(message: Message, projectDir: string): Promise<string> {
+    let prompt = message.content;
+
+    if (message.attachments.size === 0) return prompt;
+
+    const log = getLogger();
+    const uploadDir = join(projectDir, '.cc-chat', 'uploads');
+    if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true });
+
+    const paths: string[] = [];
+
+    for (const [, attachment] of message.attachments) {
+      try {
+        const response = await fetch(attachment.url);
+        if (!response.ok) {
+          log.warn({ url: attachment.url, status: response.status }, '[bot] Failed to download attachment');
+          continue;
+        }
+        const buffer = Buffer.from(await response.arrayBuffer());
+        const filePath = join(uploadDir, attachment.name);
+        writeFileSync(filePath, buffer);
+        paths.push(filePath);
+        log.debug({ file: attachment.name, size: buffer.length }, '[bot] Attachment saved');
+      } catch (error) {
+        log.error(error, '[bot] Failed to download attachment');
+      }
+    }
+
+    if (paths.length > 0) {
+      const fileList = paths.map(p => `"${p}"`).join(', ');
+      prompt = `${prompt}\n\nAttachments: [${fileList}]`;
+    }
+
+    return prompt;
+  }
+
+  /**
    * Handle incoming messages in project threads.
    * Routes messages to Claude and streams responses back.
    * Uses mutex lock to prevent race conditions when multiple messages arrive.
@@ -752,6 +792,9 @@ export class DiscordBot {
     const log = getLogger();
     log.debug({ threadId: channel.id, sessionName: session.name, prompt: message.content.slice(0, 100) }, '[bot] Message received');
 
+    // Build prompt with attachments
+    const prompt = await this.buildPrompt(message, session.projectDir);
+
     // Acquire lock to prevent race conditions
     // This ensures check-then-act is atomic
     await processManager.acquireLock(session.id);
@@ -762,11 +805,11 @@ export class DiscordBot {
         const queueLength = processManager.getQueueLength(session.id);
         log.debug({ threadId: session.id, queueLength }, '[bot] Task running, queuing message');
         await message.reply(`Queued (#${queueLength + 1}). Use \`/stop\` to cancel.`);
-        await processManager.enqueue(session.id, message.content);
+        await processManager.enqueue(session.id, prompt);
         return;
       }
 
-      await this.executeClaudeTask(session, message.content, channel);
+      await this.executeClaudeTask(session, prompt, channel);
 
       // Process any queued messages
       let queued: ReturnType<typeof processManager.dequeue>;
