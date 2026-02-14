@@ -30,7 +30,23 @@ const REPO_NAME = 'cc-chat';
 
 /** Platform-specific binary name */
 const BINARY_NAME = process.platform === 'win32' ? 'cc-chat-win.exe' :
-                    process.platform === 'darwin' ? 'cc-chat-mac-arm64' : 'cc-chat-linux';
+                    process.platform === 'darwin'
+                      ? (process.arch === 'arm64' ? 'cc-chat-mac-arm64' : 'cc-chat-mac-x64')
+                      : 'cc-chat-linux';
+
+/** Fetch timeout in milliseconds */
+const FETCH_TIMEOUT = 30_000;
+
+/** Fetch with timeout via AbortController */
+async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** Zod schema for GitHub release API response */
 const GitHubReleaseSchema = z.object({
@@ -278,7 +294,7 @@ export async function checkForUpdates(): Promise<{ hasUpdate: boolean; version?:
   getLogger().info('[update] Checking for updates...');
 
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`,
       { headers: { 'User-Agent': 'cc-chat' } }
     );
@@ -329,7 +345,7 @@ export async function checkForUpdates(): Promise<{ hasUpdate: boolean; version?:
 
     if (checksumAsset) {
       try {
-        const checksumResponse = await fetch(checksumAsset.browser_download_url);
+        const checksumResponse = await fetchWithTimeout(checksumAsset.browser_download_url);
         if (checksumResponse.ok) {
           const checksumText = await checksumResponse.text();
           // Format: "<hash>  <filename>" (sha256sum output)
@@ -343,7 +359,7 @@ export async function checkForUpdates(): Promise<{ hasUpdate: boolean; version?:
       }
     }
 
-    const downloadResponse = await fetch(asset.browser_download_url);
+    const downloadResponse = await fetchWithTimeout(asset.browser_download_url);
     if (!downloadResponse.ok) {
       getLogger().error(`[update] Download failed: ${downloadResponse.status}`);
       return { hasUpdate: false };

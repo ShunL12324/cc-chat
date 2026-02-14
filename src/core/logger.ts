@@ -1,137 +1,108 @@
 /**
  * Logger
  *
- * Structured logging with pino. Writes to file with manual rotation.
- * Compatible with Bun single-file compilation (no dynamic transports).
+ * Simple structured logger with three outputs:
+ * - stdout: for service managers (launchctl/systemd)
+ * - logs/cc-chat.log: all levels
+ * - logs/error.log: error level only
  *
- * Features:
- * - JSON structured logs to file via pino.destination
- * - Manual rotation by size (10MB) with retention (7 files)
- * - Console output preserved alongside file logging
- * - Overrides console.log/error for unified logging
+ * Format: YYYY-MM-DDTHH:mm:ss.sssZ [cc-chat] [level] message key=value
  */
 
-import pino from 'pino';
-import { existsSync, mkdirSync, statSync, renameSync, unlinkSync } from 'fs';
+import { createWriteStream, mkdirSync, existsSync } from 'fs';
+import type { WriteStream } from 'fs';
 import { join, dirname } from 'path';
 
-/** Maximum size of a log file before rotation (10MB) */
-const MAX_LOG_SIZE = 1024 * 1024 * 10;
+type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
-/** Maximum number of rotated log files to keep */
-const MAX_LOG_FILES = 7;
+const LEVEL_VALUE: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
 
-/** Global logger instance */
-let logger: pino.Logger;
+let minLevel: LogLevel = 'info';
+let allStream: WriteStream | null = null;
+let errStream: WriteStream | null = null;
 
-/** Log file path */
-let logFilePath: string;
+/** Format structured data as key=value pairs */
+function formatExtra(obj: Record<string, unknown>): string {
+  const pairs = Object.entries(obj)
+    .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`)
+    .join(' ');
+  return pairs ? ` ${pairs}` : '';
+}
 
-/**
- * Rotate log file if it exceeds MAX_LOG_SIZE.
- * Renames current log to .1, shifts existing .N to .N+1, removes oldest.
- */
-function rotateIfNeeded(): void {
-  if (!logFilePath || !existsSync(logFilePath)) return;
+/** Build a log line from level + overloaded args */
+function format(level: LogLevel, first: unknown, second?: string): string {
+  const ts = new Date().toISOString();
+  let msg: string;
+  let extra = '';
 
-  try {
-    const stat = statSync(logFilePath);
-    if (stat.size < MAX_LOG_SIZE) return;
+  if (typeof first === 'string') {
+    msg = first;
+  } else if (first instanceof Error) {
+    msg = second ?? first.message;
+    extra = ` ${first.stack ?? first.message}`;
+  } else if (typeof first === 'object' && first !== null) {
+    msg = second ?? '';
+    extra = formatExtra(first as Record<string, unknown>);
+  } else {
+    msg = String(first);
+  }
 
-    const logDir = dirname(logFilePath);
-    const baseName = logFilePath.split(/[/\\]/).pop()!;
+  return `${ts} [cc-chat] [${level}] ${msg}${extra}\n`;
+}
 
-    // Remove oldest
-    const oldest = join(logDir, `${baseName}.${MAX_LOG_FILES}`);
-    if (existsSync(oldest)) {
-      unlinkSync(oldest);
-    }
-
-    // Shift existing rotated files
-    for (let i = MAX_LOG_FILES - 1; i >= 1; i--) {
-      const from = join(logDir, `${baseName}.${i}`);
-      const to = join(logDir, `${baseName}.${i + 1}`);
-      if (existsSync(from)) {
-        renameSync(from, to);
-      }
-    }
-
-    // Rotate current
-    renameSync(logFilePath, join(logDir, `${baseName}.1`));
-  } catch {
-    // Ignore rotation errors
+/** Write a formatted line to all applicable outputs */
+function write(level: LogLevel, first: unknown, second?: string): void {
+  if (LEVEL_VALUE[level] < LEVEL_VALUE[minLevel]) return;
+  const line = format(level, first, second);
+  process.stdout.write(line);
+  allStream?.write(line);
+  if (LEVEL_VALUE[level] >= LEVEL_VALUE.error) {
+    errStream?.write(line);
   }
 }
 
+/** Logger interface compatible with pino's overloaded call signatures */
+export interface Logger {
+  debug(msg: string): void;
+  debug(obj: Record<string, unknown>, msg: string): void;
+  info(msg: string): void;
+  info(obj: Record<string, unknown>, msg: string): void;
+  warn(msg: string): void;
+  warn(obj: unknown, msg: string): void;
+  error(msg: string): void;
+  error(obj: unknown, msg: string): void;
+  flush(): void;
+}
+
+const logger: Logger = {
+  debug: (first: unknown, second?: string) => write('debug', first, second),
+  info: (first: unknown, second?: string) => write('info', first, second),
+  warn: (first: unknown, second?: string) => write('warn', first, second),
+  error: (first: unknown, second?: string) => write('error', first, second),
+  flush: () => { /* streams auto-flush on process exit */ },
+};
+
 /**
- * Initialize the logger.
- *
- * Uses pino.destination for direct file writing (no worker_threads transport).
- * This is compatible with Bun single-file compilation.
- *
- * @param debug - If true, set log level to 'debug' instead of 'info'
+ * Initialize logger with file outputs.
+ * @param debug - If true, set minimum level to 'debug'
  */
 export function initLogger(debug = false): void {
-  const appDir = dirname(process.execPath);
-  const logDir = join(appDir, 'logs');
-  logFilePath = join(logDir, 'cc-chat.log');
+  minLevel = debug ? 'debug' : 'info';
 
-  // Create logs directory if it doesn't exist
-  if (!existsSync(logDir)) {
-    mkdirSync(logDir, { recursive: true });
-  }
+  const logDir = join(dirname(process.execPath), 'logs');
+  if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
 
-  // Rotate before opening
-  rotateIfNeeded();
-
-  const dest = pino.destination({
-    dest: logFilePath,
-    sync: false,
-    mkdir: true,
-  });
-
-  logger = pino({
-    level: debug ? 'debug' : 'info',
-    timestamp: pino.stdTimeFunctions.isoTime,
-  }, dest);
-
-  // Set up periodic rotation check (every 5 minutes)
-  setInterval(() => {
-    rotateIfNeeded();
-  }, 5 * 60 * 1000);
-
-  // Override console methods to route through pino + keep console output
-  const originalLog = console.log;
-  const originalError = console.error;
-
-  console.log = (...args: unknown[]) => {
-    const message = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
-    logger.info(message);
-    originalLog.apply(console, args);
-  };
-
-  console.error = (...args: unknown[]) => {
-    const message = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
-    logger.error(message);
-    originalError.apply(console, args);
-  };
+  allStream = createWriteStream(join(logDir, 'cc-chat.log'), { flags: 'a' });
+  errStream = createWriteStream(join(logDir, 'error.log'), { flags: 'a' });
 }
 
-/**
- * Get the pino logger instance for direct structured logging.
- */
-export function getLogger(): pino.Logger {
-  if (!logger) {
-    logger = pino({ level: 'info' });
-  }
+/** Get the logger instance. Works before initLogger (stdout only). */
+export function getLogger(): Logger {
   return logger;
 }
 
-/**
- * Flush pending log writes. Call before process exit.
- */
+/** Close file streams. Call before process exit. */
 export function flushLogger(): void {
-  if (logger) {
-    logger.flush();
-  }
+  allStream?.end();
+  errStream?.end();
 }

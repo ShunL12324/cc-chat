@@ -165,9 +165,10 @@ export class DiscordBot {
    * Stop the bot gracefully, killing any running Claude processes.
    */
   async stop(): Promise<void> {
-    // Stop all scheduled tasks
-    for (const [, schedule] of this.schedules) {
+    // Stop all scheduled tasks and clean up their resources
+    for (const [id, schedule] of this.schedules) {
       schedule.cron.stop();
+      processManager.cleanup(id);
     }
     this.schedules.clear();
     await processManager.stopAll();

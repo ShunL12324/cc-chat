@@ -44,7 +44,7 @@ async function main() {
   log.info('cc-chat starting...');
 
   // Check for updates (non-blocking)
-  checkForUpdates().catch(() => {});
+  checkForUpdates().catch(e => log.warn(e, 'Update check failed'));
 
   // Start periodic update checks (every hour)
   startPeriodicUpdateCheck();

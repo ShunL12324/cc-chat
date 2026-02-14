@@ -109,6 +109,7 @@ export class ProcessManager {
 
     proc.kill();
     this.running.delete(id);
+    this.cleanup(id);
     return true;
   }
 
@@ -140,6 +141,7 @@ export class ProcessManager {
    */
   remove(id: string): void {
     this.running.delete(id);
+    this.cleanup(id);
   }
 
   /**
