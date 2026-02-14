@@ -24,6 +24,7 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  AttachmentBuilder,
 } from 'discord.js';
 import { config } from '../config.js';
 import { store } from '../store/sqlite-store.js';
@@ -45,6 +46,7 @@ import { basename, join, dirname } from 'path';
 import { homedir } from 'os';
 import { Cron } from 'croner';
 import { getLogger } from '../core/logger.js';
+import { startMcpServer, stopMcpServer, registerThread } from '../core/mcp-server.js';
 
 /**
  * Path ID mapping for Discord button custom IDs.
@@ -132,6 +134,14 @@ export class DiscordBot {
    * Start the Discord bot and register event handlers.
    */
   async start(): Promise<void> {
+    // Start embedded MCP server for send_file tool
+    await startMcpServer(async (threadId, filePath, message) => {
+      const channel = await this.client.channels.fetch(threadId);
+      if (!channel?.isThread()) return;
+      const attachment = new AttachmentBuilder(filePath);
+      await channel.send({ content: message ?? '', files: [attachment] });
+    });
+
     this.client.once('clientReady', () => {
       getLogger().info(`Logged in as ${this.client.user?.tag}`);
     });
@@ -172,6 +182,7 @@ export class DiscordBot {
     }
     this.schedules.clear();
     await processManager.stopAll();
+    await stopMcpServer();
     this.client.destroy();
   }
 
@@ -300,6 +311,7 @@ export class DiscordBot {
     };
 
     store.set(session);
+    registerThread(thread.id, path);
 
     const modeText = useContinue ? ' (continue mode)' : '';
 
@@ -791,6 +803,9 @@ export class DiscordBot {
 
     const log = getLogger();
     log.debug({ threadId: channel.id, sessionName: session.name, prompt: message.content.slice(0, 100) }, '[bot] Message received');
+
+    // Ensure thread is registered for MCP path validation
+    registerThread(session.id, session.projectDir);
 
     // Build prompt with attachments
     const prompt = await this.buildPrompt(message, session.projectDir);

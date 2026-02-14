@@ -17,6 +17,7 @@ import { processManager } from './process-manager.js';
 import type { ResultMessage, SystemInitMessage } from '../types/index.js';
 import { config } from '../config.js';
 import { getLogger } from './logger.js';
+import { getMcpConfigArg, isMcpServerRunning } from './mcp-server.js';
 
 /**
  * Options for running a Claude CLI command.
@@ -91,6 +92,11 @@ export async function runClaude(
 
   if (model) {
     args.push('--model', model);
+  }
+
+  // Inject MCP server for send_file tool
+  if (isMcpServerRunning()) {
+    args.push('--mcp-config', getMcpConfigArg(id));
   }
 
   let sessionId: string | undefined;
