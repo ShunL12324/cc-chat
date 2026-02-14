@@ -864,7 +864,20 @@ export class DiscordBot {
 
     store.update(session.id, { status: 'running', lastActivity: Date.now() });
 
-    let statusMessage: Awaited<ReturnType<typeof channel.send>> | null = await channel.send('Thinking...');
+    // Start typing indicator (refreshes every 8s, Discord typing lasts 10s)
+    let typingInterval: ReturnType<typeof setInterval> | null = setInterval(() => {
+      channel.sendTyping().catch(() => {});
+    }, 8000);
+    channel.sendTyping().catch(() => {});
+
+    const stopTyping = () => {
+      if (typingInterval) {
+        clearInterval(typingInterval);
+        typingInterval = null;
+      }
+    };
+
+    let statusMessage: Awaited<ReturnType<typeof channel.send>> | null = null;
     let lastStatusText = '';
     let messageCount = 0;
 
@@ -877,6 +890,7 @@ export class DiscordBot {
      * Creates a new message if the previous one was deleted.
      */
     const updateStatus = async (text: string) => {
+      stopTyping();
       if (text === lastStatusText) return;
       lastStatusText = text;
 
@@ -901,6 +915,7 @@ export class DiscordBot {
      * Send a new message and reset status tracking.
      */
     const sendNewMessage = async (text: string) => {
+      stopTyping();
       messageCount++;
       if (messageCount > maxMessages) return;
 
@@ -979,6 +994,7 @@ export class DiscordBot {
         await sendNewMessage(formatError(result.error));
       }
     } finally {
+      stopTyping();
       store.update(session.id, { status: 'idle', lastActivity: Date.now() });
     }
   }
