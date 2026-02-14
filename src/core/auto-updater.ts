@@ -205,8 +205,9 @@ export function markHealthy(): void {
  * 3. Rename .new to current executable
  * 4. Set executable permissions on Unix
  * 5. Promote pending version file to current
+ * 6. Return true so caller can re-exec the new binary
  */
-export function applyPendingUpdate(): void {
+export function applyPendingUpdate(): boolean {
   const newPath = getNewPath();
   const exePath = getExePath();
   const backupPath = getBackupPath();
@@ -214,7 +215,7 @@ export function applyPendingUpdate(): void {
   const versionFile = getVersionFile();
 
   if (!existsSync(newPath)) {
-    return;
+    return false;
   }
 
   getLogger().info('[update] Applying pending update...');
@@ -245,6 +246,7 @@ export function applyPendingUpdate(): void {
     }
 
     getLogger().info('[update] Update applied successfully');
+    return true;
   } catch (error) {
     getLogger().error(`[update] Failed to apply update: ${error}`);
     // Try to restore backup
@@ -261,6 +263,7 @@ export function applyPendingUpdate(): void {
     } catch {
       // Ignore cleanup errors
     }
+    return false;
   }
 }
 

@@ -35,8 +35,13 @@ async function main() {
   // Rollback if previous version crashed after update
   rollbackIfCrashed();
 
-  // Apply pending update if exists
-  applyPendingUpdate();
+  // Apply pending update if exists — exit to let service manager restart with new binary
+  const updated = applyPendingUpdate();
+  if (updated) {
+    log.info('[update] Update applied, restarting...');
+    flushLogger();
+    process.exit(0);
+  }
 
   // Mark as starting (for crash detection on next launch)
   markStarting();
