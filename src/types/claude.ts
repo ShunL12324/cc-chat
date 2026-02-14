@@ -42,7 +42,7 @@ export const ToolUseContentSchema = z.object({
 export const ToolResultContentSchema = z.object({
   type: z.literal('tool_result'),
   tool_use_id: z.string(),
-  content: z.string(),
+  content: z.union([z.string(), z.array(z.unknown())]),
   is_error: z.boolean().optional(),
 }).passthrough();
 
@@ -101,7 +101,7 @@ export const UserMessageSchema = z.object({
   type: z.literal('user'),
   message: ContentBlockSchema,
   session_id: z.string(),
-  tool_use_result: ToolUseResultDataSchema.optional(),
+  tool_use_result: z.union([ToolUseResultDataSchema, z.array(ToolUseResultDataSchema)]).optional(),
 }).passthrough();
 
 export const ToolUseMessageSchema = z.object({
