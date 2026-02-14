@@ -807,8 +807,13 @@ export class DiscordBot {
     // Ensure thread is registered for MCP path validation
     registerThread(session.id, session.projectDir);
 
-    // Build prompt with attachments
+    // Build prompt with attachments (show typing while downloading)
+    if (message.attachments.size > 0) {
+      await channel.sendTyping();
+    }
     const prompt = await this.buildPrompt(message, session.projectDir);
+
+    if (!prompt.trim()) return;
 
     // Acquire lock to prevent race conditions
     // This ensures check-then-act is atomic
