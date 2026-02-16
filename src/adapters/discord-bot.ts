@@ -25,6 +25,8 @@ import {
   ButtonBuilder,
   ButtonStyle,
   AttachmentBuilder,
+  REST,
+  Routes,
 } from 'discord.js';
 import { config } from '../config.js';
 import { store } from '../store/sqlite-store.js';
@@ -47,6 +49,7 @@ import { homedir } from 'os';
 import { Cron } from 'croner';
 import { getLogger } from '../core/logger.js';
 import { startMcpServer, stopMcpServer, registerThread } from '../core/mcp-server.js';
+import { commands } from './commands.js';
 
 /**
  * Path ID mapping for Discord button custom IDs.
@@ -142,8 +145,27 @@ export class DiscordBot {
       await channel.send({ content: message ?? '', files: [attachment] });
     });
 
-    this.client.once('clientReady', () => {
+    this.client.once('clientReady', async () => {
       getLogger().info(`Logged in as ${this.client.user?.tag}`);
+
+      // Auto-register slash commands on startup
+      try {
+        const rest = new REST().setToken(config.discord.token);
+        if (config.discord.guildId) {
+          await rest.put(
+            Routes.applicationGuildCommands(config.discord.clientId, config.discord.guildId),
+            { body: commands }
+          );
+        } else {
+          await rest.put(
+            Routes.applicationCommands(config.discord.clientId),
+            { body: commands }
+          );
+        }
+        getLogger().info(`Registered ${commands.length} slash commands`);
+      } catch (error) {
+        getLogger().error(error, 'Failed to register slash commands');
+      }
     });
 
     this.client.on('interactionCreate', async (interaction) => {
