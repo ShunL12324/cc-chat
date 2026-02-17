@@ -209,6 +209,30 @@ export class DiscordBot {
   }
 
   /**
+   * Send an update notification to active project threads.
+   * Sends to threads with running processes.
+   */
+  async sendUpdateNotification(message: string): Promise<void> {
+    // Get thread IDs with running processes
+    const runningIds = processManager.getRunningIds();
+    for (const threadId of runningIds) {
+      try {
+        const channel = await this.client.channels.fetch(threadId);
+        if (channel?.isThread()) {
+          await channel.send(message);
+        }
+      } catch {
+        // Thread may have been deleted or archived
+      }
+    }
+
+    // If no running threads, log only
+    if (runningIds.length === 0) {
+      getLogger().info(`[update] ${message}`);
+    }
+  }
+
+  /**
    * Check if a user is authorized to use the bot.
    * Returns true if no user restrictions are configured.
    */

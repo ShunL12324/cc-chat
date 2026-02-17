@@ -551,7 +551,7 @@ export function formatUpdateStatus(status: {
   if (status.hasPendingUpdate && status.pendingVersion) {
     lines.push(`✅ Update \`${status.pendingVersion}\` downloaded`);
     lines.push('');
-    lines.push('*Restart the service to apply the update*');
+    lines.push('*Will auto-restart when idle*');
   } else {
     lines.push('✅ You are on the latest version');
   }

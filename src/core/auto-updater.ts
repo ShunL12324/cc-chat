@@ -64,6 +64,12 @@ let onUpdateDownloaded: ((version: string) => void) | null = null;
 /** Version of pending update, if any */
 let pendingUpdateVersion: string | null = null;
 
+/** Active restart polling interval */
+let restartInterval: ReturnType<typeof setInterval> | null = null;
+
+/** Whether a restart is currently scheduled */
+let restartScheduled = false;
+
 /** Cached current version */
 let currentVersion: string | null = null;
 
@@ -289,6 +295,89 @@ export function getPendingUpdateVersion(): string | null {
 }
 
 /**
+ * Apply pending update and spawn a new process, then exit.
+ * The new process runs detached so it survives the current process exiting.
+ */
+async function applyAndRestart(shutdownFn: () => Promise<void>): Promise<void> {
+  const log = getLogger();
+
+  const applied = applyPendingUpdate();
+  if (!applied) {
+    log.error('[update] Failed to apply update during auto-restart');
+    return;
+  }
+
+  log.info('[update] Update applied, spawning new process...');
+
+  try {
+    const child = Bun.spawn([process.execPath], {
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    child.unref();
+  } catch (error) {
+    log.error(`[update] Failed to spawn new process: ${error}`);
+    log.error('[update] Falling back to manual restart');
+    return;
+  }
+
+  log.info('[update] New process spawned, shutting down current process...');
+  await shutdownFn();
+  process.exit(0);
+}
+
+/**
+ * Schedule an auto-restart after an update is downloaded.
+ * If idle (no running Claude processes), restarts immediately.
+ * Otherwise polls every 10 seconds until idle.
+ */
+export function scheduleRestart(opts: {
+  isIdle: () => boolean;
+  shutdown: () => Promise<void>;
+  notify: (msg: string) => void;
+}): void {
+  if (restartScheduled) return;
+  restartScheduled = true;
+
+  const log = getLogger();
+  const version = pendingUpdateVersion ?? 'unknown';
+
+  const doRestart = async () => {
+    if (restartInterval) {
+      clearInterval(restartInterval);
+      restartInterval = null;
+    }
+    opts.notify(`🔄 Auto-restarting to apply update \`${version}\`...`);
+    log.info(`[update] Auto-restarting to apply ${version}`);
+    await applyAndRestart(opts.shutdown);
+  };
+
+  if (opts.isIdle()) {
+    doRestart();
+    return;
+  }
+
+  opts.notify(`⏳ Update \`${version}\` downloaded. Will auto-restart when all tasks finish.`);
+  log.info('[update] Waiting for running tasks to finish before restart...');
+
+  restartInterval = setInterval(() => {
+    if (opts.isIdle()) {
+      doRestart();
+    }
+  }, 10_000);
+}
+
+/**
+ * Cancel a scheduled restart (e.g. if update was rolled back).
+ */
+export function cancelScheduledRestart(): void {
+  if (restartInterval) {
+    clearInterval(restartInterval);
+    restartInterval = null;
+  }
+  restartScheduled = false;
+}
+
+/**
  * Check for updates from GitHub releases.
  * Downloads new version to .new file if available.
  * Uses semver for proper version comparison.
@@ -405,7 +494,7 @@ export async function checkForUpdates(): Promise<{ hasUpdate: boolean; version?:
     writeFileSync(getPendingVersionFile(), latestTag, 'utf-8');
     pendingUpdateVersion = latestTag;
 
-    getLogger().info(`[update] Downloaded ${latestTag}, will apply on next restart`);
+    getLogger().info(`[update] Downloaded ${latestTag}, will auto-restart when idle`);
 
     // Notify callback
     if (onUpdateDownloaded) {
@@ -441,13 +530,14 @@ export function startPeriodicUpdateCheck(): void {
 }
 
 /**
- * Stop periodic update checks.
+ * Stop periodic update checks and cancel any scheduled restart.
  */
 export function stopPeriodicUpdateCheck(): void {
   if (updateCron) {
     updateCron.stop();
     updateCron = null;
   }
+  cancelScheduledRestart();
 }
 
 /**

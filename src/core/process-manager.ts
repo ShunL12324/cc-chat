@@ -152,6 +152,13 @@ export class ProcessManager {
   }
 
   /**
+   * Get IDs of all running processes.
+   */
+  getRunningIds(): string[] {
+    return Array.from(this.running.keys());
+  }
+
+  /**
    * Add a message to the queue for a process.
    * Returns a promise that resolves when the message is processed.
    */

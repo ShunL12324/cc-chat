@@ -17,7 +17,8 @@
 import { loadConfig, validateConfig, config } from './config.js';
 import { DiscordBot } from './adapters/discord-bot.js';
 import { store } from './store/sqlite-store.js';
-import { applyPendingUpdate, checkForUpdates, startPeriodicUpdateCheck, stopPeriodicUpdateCheck, rollbackIfCrashed, markStarting, markHealthy } from './core/auto-updater.js';
+import { applyPendingUpdate, checkForUpdates, startPeriodicUpdateCheck, stopPeriodicUpdateCheck, rollbackIfCrashed, markStarting, markHealthy, setUpdateCallback, scheduleRestart, cancelScheduledRestart } from './core/auto-updater.js';
+import { processManager } from './core/process-manager.js';
 import { initLogger, flushLogger, getLogger } from './core/logger.js';
 
 /**
@@ -91,6 +92,21 @@ async function main() {
     log.error(error, 'Failed to start bot');
     process.exit(1);
   }
+
+  // Register auto-restart callback for updates
+  setUpdateCallback((_version) => {
+    scheduleRestart({
+      isIdle: () => processManager.getRunningCount() === 0,
+      shutdown: async () => {
+        cancelScheduledRestart();
+        stopPeriodicUpdateCheck();
+        await bot.stop();
+        store.close();
+        flushLogger();
+      },
+      notify: (msg) => bot.sendUpdateNotification(msg),
+    });
+  });
 }
 
 main();
