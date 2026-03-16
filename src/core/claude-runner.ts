@@ -130,7 +130,7 @@ export async function runClaude(
       timeout,
       reject: false,
       stdout: 'pipe',
-      stderr: 'pipe',
+      stderr: 'ignore', // avoid buffering verbose stderr output in RAM
       stdin: 'inherit',
       // graceful shutdown: SIGTERM first, then SIGKILL after 5s
       killSignal: 'SIGTERM',
@@ -142,8 +142,9 @@ export async function runClaude(
 
     // Stream stdout through parser
     if (proc.stdout) {
+      const decoder = new TextDecoder();
       for await (const chunk of proc.stdout) {
-        const text = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
+        const text = typeof chunk === 'string' ? chunk : decoder.decode(chunk);
         log.debug({ chunkLen: text.length }, '[runner] stdout chunk');
         await parser.feed(text);
       }
@@ -164,7 +165,7 @@ export async function runClaude(
       return {
         success: false,
         sessionId,
-        error: execResult.stderr || `Process exited with code ${execResult.exitCode}`,
+        error: `Process exited with code ${execResult.exitCode}`,
       };
     }
 

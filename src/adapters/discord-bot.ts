@@ -43,7 +43,7 @@ import {
   formatUpdateStatus,
 } from './output-formatter.js';
 import type { Session, ModelType, ToolUseContent, AssistantMessage, ResultMessage } from '../types/index.js';
-import { readdirSync, statSync, existsSync, mkdirSync, writeFileSync } from 'fs';
+import { readdirSync, statSync, existsSync, mkdirSync } from 'fs';
 import { basename, join, dirname } from 'path';
 import { homedir } from 'os';
 import { Cron } from 'croner';
@@ -807,11 +807,10 @@ export class DiscordBot {
           log.warn({ url: attachment.url, status: response.status }, '[bot] Failed to download attachment');
           continue;
         }
-        const buffer = Buffer.from(await response.arrayBuffer());
         const filePath = join(uploadDir, attachment.name);
-        writeFileSync(filePath, buffer);
+        await Bun.write(filePath, response.body!);
         paths.push(filePath);
-        log.debug({ file: attachment.name, size: buffer.length }, '[bot] Attachment saved');
+        log.debug({ file: attachment.name, size: attachment.size }, '[bot] Attachment saved');
       } catch (error) {
         log.error(error, '[bot] Failed to download attachment');
       }
